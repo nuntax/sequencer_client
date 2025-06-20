@@ -1,4 +1,4 @@
-use sequencer_reader::connection::SequencerReader;
+use sequencer_reader::reader::SequencerReader;
 #[tokio::main()]
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed"; // Replace with your WebSocket
