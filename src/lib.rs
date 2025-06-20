@@ -14,7 +14,6 @@
 //! @author: @nuntax (email: dev@nun.tax)
 //! @license: MIT License
 
-#![warn(missing_docs)]
 ///Main module for the sequencer reader crate.
 pub mod reader;
 ///Types for decoding sequencer data.
