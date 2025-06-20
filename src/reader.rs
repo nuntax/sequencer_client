@@ -326,7 +326,7 @@ fn parse_raw_tx(bytes: &[u8]) -> Result<Box<dyn Transaction>, TransactionDecodin
         .ok_or(TransactionDecodingError::MissingTransactionType)?;
     let tx_type = TxType::from_u8(*tx_type)?;
     let tx: Box<dyn Transaction> = match tx_type {
-        TxType::Legacy => alloy::consensus::transaction::TxLegacy::decode(&mut &bytes[1..])
+        TxType::Legacy => alloy::consensus::transaction::TxLegacy::decode(&mut &bytes[0..])
             .map(Box::new)
             .map_err(TransactionDecodingError::LegacyDecodingError)?,
         TxType::Eip2930 => alloy::consensus::transaction::TxEip2930::decode(&mut &bytes[1..])
