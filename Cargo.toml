@@ -1,6 +1,6 @@
 [package]
 name = "sequencer_client"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 license-file = "LICENSE"
 description = "A library for reading the Arbitrum Sequencer feed."
