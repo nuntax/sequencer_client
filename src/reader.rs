@@ -1,4 +1,3 @@
-use crate::types::Root;
 use alloy::consensus::Transaction;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
 
@@ -7,21 +6,65 @@ use base64::prelude::*;
 use futures_util::StreamExt;
 use std::io::{Cursor, Read};
 
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
+use serde_json::Value;
 use tokio::{
     net::TcpStream,
     sync::mpsc::{Receiver, Sender, channel},
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Root {
+    version: u8,
+    messages: Vec<BroadcastFeedMessage>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BroadcastFeedMessage {
+    sequence_number: u64,
+    #[serde(rename = "message")]
+    message_with_meta_data: MessageWithMetadata,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageWithMetadata {
+    #[serde(rename = "message")]
+    l1_incoming_message: L1IncomingMessageHeader,
+    delayed_messages_read: u64,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct L1IncomingMessageHeader {
+    header: Header,
+    #[serde(rename = "l2Msg")]
+    l2msg: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Header {
+    kind: u8,
+    sender: String,
+    block_number: u64,
+    timestamp: u64,
+    request_id: Value,
+    base_fee_l1: Value,
+}
+
 /// SequencerMessage represents a message received from the Arbitrum sequencer and is equivalent to one transaction.
-/// It contains the sequence number of the message and the transaction itself.
-/// Note that the transaction is a boxed trait object. because the transaction can be of different types (legacy, eip2930, eip1559).
-/// Also note that the sequence number is not the block number, but can be obtained by calling the `block_number` method.
 #[derive(Debug)]
 pub struct SequencerMessage {
     /// The sequence number of the message, can be used to determine the block number.
+    /// <div class="warning">On Arbitrum Nova chains the sequence_number variable is the block number. <br>On Arbitrum One use the ```block_number()``` function.</div>
     pub sequence_number: u64,
     /// The transaction contained in the message, can be of different types (legacy, eip2930, eip1559).
+    /// It is a trait object to allow for different transaction types.
     pub tx: Box<dyn Transaction>,
 }
 impl SequencerMessage {
