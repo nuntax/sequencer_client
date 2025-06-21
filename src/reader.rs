@@ -109,7 +109,6 @@ impl SequencerReader {
         while let Some(message) = self.ws_stream.next().await {
             match message {
                 Ok(raw_msg) => {
-                    println!("###############################################");
                     if raw_msg.is_empty() {
                         continue;
                     }
