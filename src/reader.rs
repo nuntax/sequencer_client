@@ -4,6 +4,7 @@ use alloy::consensus::transaction::RlpEcdsaDecodableTx;
 use alloy_primitives::private::alloy_rlp::Decodable;
 use base64::prelude::*;
 use futures_util::StreamExt;
+use std::collections::HashSet;
 use std::io::{Cursor, Read};
 
 use serde_derive::Deserialize;
@@ -57,15 +58,14 @@ struct Header {
     base_fee_l1: Value,
 }
 
-/// SequencerMessage represents a message received from the Arbitrum sequencer and is equivalent to one transaction.
-#[derive(Debug)]
-pub struct SequencerMessage {
-    /// The sequence number of the message, can be used to determine the block number.
-    /// <div class="warning">On Arbitrum Nova chains the sequence_number variable is the block number. <br>On Arbitrum One use the ```block_number()``` function.</div>
-    pub sequence_number: u64,
-    /// The transaction contained in the message, can be of different types (legacy, eip2930, eip1559).
-    /// It is a trait object to allow for different transaction types.
-    pub tx: Box<dyn Transaction>,
+pub enum SequencerMessage {
+    /// Represents a message containing a single transaction.
+    L2Message {
+        sequence_number: u64,
+        tx: Box<dyn Transaction>,
+    },
+    /// Represents all other messages that are not transactions.
+    Other { sequence_number: u64 },
 }
 impl SequencerMessage {
     /// Returns the block number corresponding to the sequence number.
@@ -73,8 +73,32 @@ impl SequencerMessage {
     /// This is calculated by adding the sequence number to the Arbitrum genesis block number (22207817).
     ///
     /// <div class="warning">On Nova chains the sequence_number variable is the block number.</div>
+    #[inline]
     pub fn block_number(&self) -> u64 {
-        self.sequence_number + 22207817
+        match self {
+            SequencerMessage::L2Message {
+                sequence_number, ..
+            } => sequence_number + 22207817,
+            SequencerMessage::Other { sequence_number } => *sequence_number + 22207817,
+        }
+    }
+    /// Returns the sequence number of the message.
+    #[inline]
+    pub fn sequence_number(&self) -> u64 {
+        match self {
+            SequencerMessage::L2Message {
+                sequence_number, ..
+            } => *sequence_number,
+            SequencerMessage::Other { sequence_number } => *sequence_number,
+        }
+    }
+    /// Returns the tx if the message is a transaction.
+    #[inline]
+    pub fn try_tx(&self) -> Option<&dyn Transaction> {
+        match self {
+            SequencerMessage::L2Message { tx, .. } => Some(tx.as_ref()),
+            SequencerMessage::Other { .. } => None,
+        }
     }
 }
 
@@ -99,13 +123,15 @@ impl SequencerReader {
             .await
             .expect("Failed to connect");
         let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(100);
-
         (SequencerReader { ws_stream, tx }, rx)
     }
     /// Starts reading messages from the Arbitrum sequencer feed.
     /// This method runs in a loop and listens for incoming messages.
     /// It then parses the messages and forwards single transactions to the mpsc channel.
     pub async fn start_reading(&mut self) {
+        // deduplicate messages based on sequence number
+        let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
+
         while let Some(message) = self.ws_stream.next().await {
             match message {
                 Ok(raw_msg) => {
@@ -123,39 +149,55 @@ impl SequencerReader {
                         if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
                             return;
                         }
-                        if msg.message_with_meta_data.l1_incoming_message.header.kind != 3 {
+
+                        if dedup_map.contains(&msg.sequence_number) {
                             return;
                         }
 
-                        let txs = match BASE64_STANDARD
-                            .decode(msg.message_with_meta_data.l1_incoming_message.l2msg.clone())
-                        {
-                            Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
-                                Ok(txs) => {
-                                    if txs.is_empty() {
-                                        eprintln!("Empty transaction batch received");
+                        dedup_map.insert(msg.sequence_number);
+
+                        match msg.message_with_meta_data.l1_incoming_message.header.kind {
+                            3 => {
+                                let txs = match BASE64_STANDARD.decode(
+                                    msg.message_with_meta_data.l1_incoming_message.l2msg.clone(),
+                                ) {
+                                    Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
+                                        Ok(txs) => {
+                                            if txs.is_empty() {
+                                                eprintln!("Empty transaction batch received");
+                                                return;
+                                            }
+                                            txs
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to parse L2 message: {:?}", e);
+                                            return;
+                                        }
+                                    },
+                                    Err(_) => {
+                                        eprintln!("Failed to decode base64 L2 message");
                                         return;
                                     }
-                                    txs
+                                };
+                                for tx in txs {
+                                    let msg = SequencerMessage::L2Message {
+                                        sequence_number: msg.sequence_number,
+                                        tx,
+                                    };
+                                    if let Err(e) = self.tx.try_send(msg) {
+                                        eprintln!("Failed to send message to receiver: {}", e);
+                                        return;
+                                    }
                                 }
-                                Err(e) => {
-                                    eprintln!("Failed to parse L2 message: {:?}", e);
-                                    return;
-                                }
-                            },
-                            Err(_) => {
-                                eprintln!("Failed to decode base64 L2 message");
-                                return;
                             }
-                        };
-                        for tx in txs {
-                            let msg = SequencerMessage {
-                                sequence_number: msg.sequence_number,
-                                tx,
-                            };
-                            if let Err(e) = self.tx.try_send(msg) {
-                                eprintln!("Failed to send message to receiver: {}", e);
-                                return;
+                            _ => {
+                                // this is not a transaction, just forward it
+                                let sequencer_msg = SequencerMessage::Other {
+                                    sequence_number: msg.sequence_number,
+                                };
+                                if self.tx.blocking_send(sequencer_msg).is_err() {
+                                    eprintln!("Failed to send non-transaction message to receiver");
+                                }
                             }
                         }
                     });
