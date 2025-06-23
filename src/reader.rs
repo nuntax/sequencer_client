@@ -379,10 +379,6 @@ fn parse_raw_tx(bytes: &[u8]) -> Result<Box<dyn Transaction>, TransactionDecodin
                 .map_err(TransactionDecodingError::LegacyDecodingError)?
         }
         TxType::Eip2930 => {
-            tracing::info!(
-                "Decoding EIP-2930 transaction: {:?}",
-                hex::encode(&bytes[1..])
-            );
             alloy::consensus::transaction::TxEip2930::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
                 .map_err(TransactionDecodingError::Eip2930DecodingError)?
