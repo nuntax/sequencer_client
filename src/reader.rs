@@ -119,7 +119,7 @@ impl SequencerReader {
         let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
-        let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(100);
+        let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(1000);
         (SequencerReader { ws_stream, tx }, rx)
     }
     /// Starts reading messages from the Arbitrum sequencer feed.
