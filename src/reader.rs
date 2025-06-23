@@ -161,18 +161,18 @@ impl SequencerReader {
                                     Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
                                         Ok(txs) => {
                                             if txs.is_empty() {
-                                                eprintln!("Empty transaction batch received");
+                                                tracing::error!("Empty transaction batch received");
                                                 return;
                                             }
                                             txs
                                         }
                                         Err(e) => {
-                                            eprintln!("Failed to parse L2 message: {:?}", e);
+                                            tracing::error!("Failed to parse L2 message: {:?}", e);
                                             return;
                                         }
                                     },
                                     Err(_) => {
-                                        eprintln!("Failed to decode base64 L2 message");
+                                        tracing::error!("Failed to decode base64 L2 message");
                                         return;
                                     }
                                 };
@@ -182,7 +182,10 @@ impl SequencerReader {
                                         tx,
                                     };
                                     if let Err(e) = self.tx.try_send(msg) {
-                                        eprintln!("Failed to send message to receiver: {}", e);
+                                        tracing::error!(
+                                            "Failed to send message to receiver: {}",
+                                            e
+                                        );
                                         return;
                                     }
                                 }
@@ -192,15 +195,19 @@ impl SequencerReader {
                                 let sequencer_msg = SequencerMessage::Other {
                                     sequence_number: msg.sequence_number,
                                 };
-                                if self.tx.blocking_send(sequencer_msg).is_err() {
-                                    eprintln!("Failed to send non-transaction message to receiver");
+                                if let Err(e) = self.tx.try_send(sequencer_msg) {
+                                    tracing::error!(
+                                        "Failed to send non-transaction message to receiver: {}",
+                                        e
+                                    );
+                                    return;
                                 }
                             }
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
+                    tracing::error!("Error receiving message: {}", e);
                     break;
                 }
             }
