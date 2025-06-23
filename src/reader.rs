@@ -116,9 +116,6 @@ impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
     pub async fn new(url: &str) -> (Self, Receiver<SequencerMessage>) {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .unwrap();
         let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");

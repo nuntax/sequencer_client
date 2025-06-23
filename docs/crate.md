@@ -15,6 +15,12 @@
 Reference implementation:
 <https://github.com/OffchainLabs/nitro/blob/9b1e622102fa2bebfd7dffd327be19f8881f1467/arbos/incomingmessage.go#L328>
 
+## Warning
+Using the library without a defaut CryptoProvider will cause a panic.
+Make sure to install a default CryptoProvider.
+
+
+
 ## Example 
 ```rust
 async fn main() {
