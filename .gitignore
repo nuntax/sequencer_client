@@ -1,2 +1,6 @@
 target/
 Cargo.lock
+
+# any file that has perf in its name at any place
+*perf*
+flamegraph.svg
