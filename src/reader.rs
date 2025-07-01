@@ -5,7 +5,6 @@ use base64::prelude::*;
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
-use std::pin::Pin;
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -118,7 +117,7 @@ impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
     pub async fn new(url: &str) -> (Self, Receiver<SequencerMessage>) {
-        let (mut ws_stream, _) = tokio_tungstenite::connect_async(url)
+        let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
         let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(1000);
