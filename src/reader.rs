@@ -5,6 +5,7 @@ use base64::prelude::*;
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
+use std::pin::Pin;
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -109,17 +110,26 @@ pub struct SequencerReader {
     pub ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     /// The sender part of the mpsc channel used to forward messages to the receiver.
     pub tx: Sender<SequencerMessage>,
+    /// The url
+    url: String,
 }
 
 impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
     pub async fn new(url: &str) -> (Self, Receiver<SequencerMessage>) {
-        let (ws_stream, _) = tokio_tungstenite::connect_async(url)
+        let (mut ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
         let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(1000);
-        (SequencerReader { ws_stream, tx }, rx)
+        (
+            SequencerReader {
+                ws_stream,
+                tx,
+                url: url.to_string(),
+            },
+            rx,
+        )
     }
     /// Starts reading messages from the Arbitrum sequencer feed.
     /// This method runs in a loop and listens for incoming messages.
@@ -207,7 +217,10 @@ impl SequencerReader {
                 }
                 Err(e) => {
                     tracing::error!("Error receiving message: {}", e);
-                    break;
+                    tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
+                    (self.ws_stream, _) = tokio_tungstenite::connect_async(self.url.clone())
+                        .await
+                        .expect("Failed to connect");
                 }
             }
         }
