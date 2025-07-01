@@ -208,7 +208,6 @@ impl SequencerReader {
                                         "Failed to send non-transaction message to receiver: {}",
                                         e
                                     );
-                                    return;
                                 }
                             }
                         }
