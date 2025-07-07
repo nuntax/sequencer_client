@@ -10,7 +10,9 @@ authors = ["nuntax"]
 readme = "README.md"
 keywords = ["web3"]
 [dependencies]
-alloy = { version = "1.0.12", features = ["consensus"] }
+alloy = { version = "1.0.12", features = [
+    "consensus",
+], default-features = false }
 alloy-primitives = "1.2.0"
 alloy-rlp = "0.3.12"
 base64 = "0.22.1"
