@@ -2,9 +2,11 @@ use alloy::consensus::Transaction;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
 
 use base64::prelude::*;
+use futures_util::Stream;
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
+use std::pin::Pin;
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -242,6 +244,95 @@ impl SequencerReader {
                 }
             }
         }
+    }
+
+    /// Returns a stream of SequencerMessage without blocking the current thread.
+    /// This provides the same functionality as start_reading but as a stream.
+    pub fn into_stream(mut self) -> Pin<Box<dyn Stream<Item = SequencerMessage> + Send>> {
+        Box::pin(async_stream::stream! {
+            let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
+
+            while let Some(message) = self.ws_stream.next().await {
+                match message {
+                    Ok(raw_msg) => {
+                        if raw_msg.is_empty() {
+                            continue;
+                        }
+                        let as_txt = raw_msg.into_text().unwrap();
+                        let structured_data: Root = match serde_json::from_slice(as_txt.as_bytes()) {
+                            Ok(ret) => ret,
+                            Err(_) => {
+                                continue;
+                            }
+                        };
+
+                        for msg in structured_data.messages.iter() {
+                            if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
+                                continue;
+                            }
+
+                            if dedup_map.contains(&msg.sequence_number) {
+                                continue;
+                            }
+
+                            dedup_map.insert(msg.sequence_number);
+
+                            match msg.message_with_meta_data.l1_incoming_message.header.kind {
+                                3 => {
+                                    let txs = match BASE64_STANDARD.decode(
+                                        msg.message_with_meta_data.l1_incoming_message.l2msg.clone(),
+                                    ) {
+                                        Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
+                                            Ok(txs) => {
+                                                if txs.is_empty() {
+                                                    tracing::error!("Empty transaction batch received");
+                                                    continue;
+                                                }
+                                                txs
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to parse L2 message: {:?}", e);
+                                                continue;
+                                            }
+                                        },
+                                        Err(_) => {
+                                            tracing::error!("Failed to decode base64 L2 message");
+                                            continue;
+                                        }
+                                    };
+                                    for tx in txs {
+                                        let sequencer_msg = SequencerMessage::L2Message {
+                                            sequence_number: msg.sequence_number,
+                                            tx,
+                                        };
+                                        yield sequencer_msg;
+                                    }
+                                }
+                                6 => {
+                                    let sequencer_msg = SequencerMessage::EndOfBlock {
+                                        sequence_number: msg.sequence_number,
+                                    };
+                                    yield sequencer_msg;
+                                }
+                                _ => {
+                                    let sequencer_msg = SequencerMessage::Other {
+                                        sequence_number: msg.sequence_number,
+                                    };
+                                    yield sequencer_msg;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Error receiving message: {}", e);
+                        tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
+                        (self.ws_stream, _) = tokio_tungstenite::connect_async(self.url.clone())
+                            .await
+                            .expect("Failed to connect");
+                    }
+                }
+            }
+        })
     }
 }
 
