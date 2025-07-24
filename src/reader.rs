@@ -63,8 +63,13 @@ pub enum SequencerMessage {
         sequence_number: u64,
         tx: Box<dyn Transaction>,
     },
+    EndOfBlock {
+        sequence_number: u64,
+    },
     /// Represents all other messages that are not transactions.
-    Other { sequence_number: u64 },
+    Other {
+        sequence_number: u64,
+    },
 }
 impl SequencerMessage {
     /// Returns the block number corresponding to the sequence number.
@@ -78,6 +83,7 @@ impl SequencerMessage {
             SequencerMessage::L2Message {
                 sequence_number, ..
             } => sequence_number + 22207817,
+            SequencerMessage::EndOfBlock { sequence_number } => *sequence_number + 22207817,
             SequencerMessage::Other { sequence_number } => *sequence_number + 22207817,
         }
     }
@@ -88,6 +94,7 @@ impl SequencerMessage {
             SequencerMessage::L2Message {
                 sequence_number, ..
             } => *sequence_number,
+            SequencerMessage::EndOfBlock { sequence_number } => *sequence_number,
             SequencerMessage::Other { sequence_number } => *sequence_number,
         }
     }
@@ -96,6 +103,7 @@ impl SequencerMessage {
     pub fn try_tx(&self) -> Option<&dyn Transaction> {
         match self {
             SequencerMessage::L2Message { tx, .. } => Some(tx.as_ref()),
+            SequencerMessage::EndOfBlock { .. } => None,
             SequencerMessage::Other { .. } => None,
         }
     }
@@ -196,6 +204,18 @@ impl SequencerReader {
                                         );
                                         return;
                                     }
+                                }
+                            }
+                            6 => {
+                                // end of block message, this one is important for producing blocks
+                                let msg = SequencerMessage::EndOfBlock {
+                                    sequence_number: msg.sequence_number,
+                                };
+                                if let Err(e) = self.tx.try_send(msg) {
+                                    tracing::error!(
+                                        "Failed to send end of block message to receiver: {}",
+                                        e
+                                    );
                                 }
                             }
                             _ => {
