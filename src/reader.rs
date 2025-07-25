@@ -1,6 +1,8 @@
 use alloy::consensus::Transaction;
+use alloy::consensus::transaction::Recovered;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
 
+use alloy_primitives::SignatureError;
 use base64::prelude::*;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -63,7 +65,7 @@ pub enum SequencerMessage {
     /// Represents a message containing a single transaction.
     L2Message {
         sequence_number: u64,
-        tx: Box<dyn Transaction>,
+        tx: Recovered<Box<dyn Transaction + Send + Sync>>,
     },
     EndOfBlock {
         sequence_number: u64,
@@ -98,15 +100,6 @@ impl SequencerMessage {
             } => *sequence_number,
             SequencerMessage::EndOfBlock { sequence_number } => *sequence_number,
             SequencerMessage::Other { sequence_number } => *sequence_number,
-        }
-    }
-    /// Returns the tx if the message is a transaction.
-    #[inline]
-    pub fn try_tx(&self) -> Option<&dyn Transaction> {
-        match self {
-            SequencerMessage::L2Message { tx, .. } => Some(tx.as_ref()),
-            SequencerMessage::EndOfBlock { .. } => None,
-            SequencerMessage::Other { .. } => None,
         }
     }
 }
@@ -392,14 +385,14 @@ impl TryFrom<u8> for L2MessageKind {
 fn parse_l2_msg(
     bytes: &mut [u8],
     depth: u32,
-) -> Result<Vec<Box<dyn Transaction>>, MessageDecodingError> {
+) -> Result<Vec<Recovered<Box<dyn Transaction + Send + Sync>>>, MessageDecodingError> {
     if depth >= MAX_BATCH_DEPTH {
         return Err(MessageDecodingError::BatchTooDeep);
     }
 
     // get kind byte and cast to enum
     let kind = L2MessageKind::try_from(bytes[0])?;
-    let mut transactions: Vec<Box<dyn Transaction>> = Vec::new();
+    let mut transactions: Vec<Recovered<Box<dyn Transaction + Send + Sync>>> = Vec::new();
 
     match kind {
         L2MessageKind::SignedTx => {
@@ -450,6 +443,7 @@ fn parse_l2_msg(
 #[derive(Debug)]
 /// TransactionDecodingError represents an error that can occur while decoding a transaction from the Arbitrum sequencer.
 pub enum TransactionDecodingError {
+    RecoverError(SignatureError),
     /// Error while decoding a legacy transaction.
     LegacyDecodingError(alloy_rlp::Error),
     /// Error while decoding an EIP-2930 transaction.
@@ -489,33 +483,51 @@ impl TxType {
     }
 }
 
-fn parse_raw_tx(bytes: &[u8]) -> Result<Box<dyn Transaction>, TransactionDecodingError> {
+fn parse_raw_tx(
+    bytes: &[u8],
+) -> Result<Recovered<Box<dyn Transaction + Send + Sync>>, TransactionDecodingError> {
     let tx_type = bytes
         .first()
         .ok_or(TransactionDecodingError::MissingTransactionType)?;
     let tx_type = TxType::from_u8(*tx_type)?;
-    let tx: Box<dyn Transaction> = match tx_type {
+    let tx: Recovered<Box<dyn Transaction + Send + Sync>> = match tx_type {
         TxType::Legacy => {
-            alloy::consensus::transaction::TxLegacy::rlp_decode_signed(&mut &bytes[0..])
+            let tx = alloy::consensus::transaction::TxLegacy::rlp_decode_signed(&mut &bytes[0..])
                 .map(Box::new)
-                .map_err(TransactionDecodingError::LegacyDecodingError)?
+                .map_err(TransactionDecodingError::Eip1559DecodingError)?;
+            let signer = tx
+                .recover_signer()
+                .map_err(TransactionDecodingError::RecoverError)?;
+            Recovered::new_unchecked(tx, signer)
         }
         TxType::Eip2930 => {
-            alloy::consensus::transaction::TxEip2930::rlp_decode_signed(&mut &bytes[1..])
+            let tx = alloy::consensus::transaction::TxEip2930::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
-                .map_err(TransactionDecodingError::Eip2930DecodingError)?
+                .map_err(TransactionDecodingError::Eip2930DecodingError)?;
+            let signer = tx
+                .recover_signer()
+                .map_err(TransactionDecodingError::RecoverError)?;
+            Recovered::new_unchecked(tx, signer)
         }
         TxType::Eip1559 => {
             //log hex string of the transaction
             // decode the EIP-1559 transaction
-            alloy::consensus::transaction::TxEip1559::rlp_decode_signed(&mut &bytes[1..])
+            let tx = alloy::consensus::transaction::TxEip1559::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
-                .map_err(TransactionDecodingError::Eip1559DecodingError)?
+                .map_err(TransactionDecodingError::Eip1559DecodingError)?;
+            let signer = tx
+                .recover_signer()
+                .map_err(TransactionDecodingError::RecoverError)?;
+            Recovered::new_unchecked(tx, signer)
         }
         TxType::Eip7702 => {
-            alloy::consensus::transaction::TxEip7702::rlp_decode_signed(&mut &bytes[1..])
+            let tx = alloy::consensus::transaction::TxEip7702::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
-                .map_err(TransactionDecodingError::Eip7702DecodingError)?
+                .map_err(TransactionDecodingError::Eip7702DecodingError)?;
+            let signer = tx
+                .recover_signer()
+                .map_err(TransactionDecodingError::RecoverError)?;
+            Recovered::new_unchecked(tx, signer)
         }
     };
     Ok(tx)
