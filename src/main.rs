@@ -18,13 +18,13 @@ async fn main() {
         tracing::info!("Received message: {:?}", msg.block_number());
         if let SequencerMessage::L2Message {
             sequence_number,
+            tx_hash,
             tx,
         } = msg
         {
             tracing::info!(
-                "Received L2Message with sequence number: {}, transaction: {:?}",
+                "Received L2Message with sequence number: {}, transaction: {tx_hash}",
                 sequence_number,
-                tx
             );
         }
     }

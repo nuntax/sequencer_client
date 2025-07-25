@@ -3,6 +3,7 @@ use alloy::consensus::transaction::Recovered;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
 
 use alloy_primitives::SignatureError;
+use alloy_primitives::TxHash;
 use base64::prelude::*;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -65,6 +66,7 @@ pub enum SequencerMessage {
     /// Represents a message containing a single transaction.
     L2Message {
         sequence_number: u64,
+        tx_hash: TxHash,
         tx: Recovered<Box<dyn Transaction + Send + Sync>>,
     },
     EndOfBlock {
@@ -187,9 +189,10 @@ impl SequencerReader {
                                         return;
                                     }
                                 };
-                                for tx in txs {
+                                for (tx_hash, tx) in txs {
                                     let msg = SequencerMessage::L2Message {
                                         sequence_number: msg.sequence_number,
+                                        tx_hash,
                                         tx,
                                     };
                                     if let Err(e) = self.tx.try_send(msg) {
@@ -293,9 +296,10 @@ impl SequencerReader {
                                             continue;
                                         }
                                     };
-                                    for tx in txs {
+                                    for (tx_hash, tx) in txs {
                                         let sequencer_msg = SequencerMessage::L2Message {
                                             sequence_number: msg.sequence_number,
+                                            tx_hash,
                                             tx,
                                         };
                                         yield sequencer_msg;
@@ -385,19 +389,20 @@ impl TryFrom<u8> for L2MessageKind {
 fn parse_l2_msg(
     bytes: &mut [u8],
     depth: u32,
-) -> Result<Vec<Recovered<Box<dyn Transaction + Send + Sync>>>, MessageDecodingError> {
+) -> Result<Vec<(TxHash, Recovered<Box<dyn Transaction + Send + Sync>>)>, MessageDecodingError> {
     if depth >= MAX_BATCH_DEPTH {
         return Err(MessageDecodingError::BatchTooDeep);
     }
 
     // get kind byte and cast to enum
     let kind = L2MessageKind::try_from(bytes[0])?;
-    let mut transactions: Vec<Recovered<Box<dyn Transaction + Send + Sync>>> = Vec::new();
+    let mut transactions: Vec<(TxHash, Recovered<Box<dyn Transaction + Send + Sync>>)> = Vec::new();
 
     match kind {
         L2MessageKind::SignedTx => {
-            let tx = parse_raw_tx(&bytes[1..]).map_err(MessageDecodingError::TxDecodingError)?;
-            transactions.push(tx);
+            let (tx_hash, tx) =
+                parse_raw_tx(&bytes[1..]).map_err(MessageDecodingError::TxDecodingError)?;
+            transactions.push((tx_hash, tx));
         }
         L2MessageKind::Heartbeat => {
             // deprecated heartbeat message, we can ignore it
@@ -485,29 +490,31 @@ impl TxType {
 
 fn parse_raw_tx(
     bytes: &[u8],
-) -> Result<Recovered<Box<dyn Transaction + Send + Sync>>, TransactionDecodingError> {
+) -> Result<(TxHash, Recovered<Box<dyn Transaction + Send + Sync>>), TransactionDecodingError> {
     let tx_type = bytes
         .first()
         .ok_or(TransactionDecodingError::MissingTransactionType)?;
     let tx_type = TxType::from_u8(*tx_type)?;
-    let tx: Recovered<Box<dyn Transaction + Send + Sync>> = match tx_type {
+    let (tx_hash, tx): (TxHash, Recovered<Box<dyn Transaction + Send + Sync>>) = match tx_type {
         TxType::Legacy => {
             let tx = alloy::consensus::transaction::TxLegacy::rlp_decode_signed(&mut &bytes[0..])
                 .map(Box::new)
                 .map_err(TransactionDecodingError::Eip1559DecodingError)?;
+            let tx_hash = tx.hash();
             let signer = tx
                 .recover_signer()
                 .map_err(TransactionDecodingError::RecoverError)?;
-            Recovered::new_unchecked(tx, signer)
+            (*tx_hash, Recovered::new_unchecked(tx, signer))
         }
         TxType::Eip2930 => {
             let tx = alloy::consensus::transaction::TxEip2930::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
                 .map_err(TransactionDecodingError::Eip2930DecodingError)?;
+            let tx_hash = tx.hash();
             let signer = tx
                 .recover_signer()
                 .map_err(TransactionDecodingError::RecoverError)?;
-            Recovered::new_unchecked(tx, signer)
+            (*tx_hash, Recovered::new_unchecked(tx, signer))
         }
         TxType::Eip1559 => {
             //log hex string of the transaction
@@ -515,20 +522,22 @@ fn parse_raw_tx(
             let tx = alloy::consensus::transaction::TxEip1559::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
                 .map_err(TransactionDecodingError::Eip1559DecodingError)?;
+            let tx_hash = tx.hash();
             let signer = tx
                 .recover_signer()
                 .map_err(TransactionDecodingError::RecoverError)?;
-            Recovered::new_unchecked(tx, signer)
+            (*tx_hash, Recovered::new_unchecked(tx, signer))
         }
         TxType::Eip7702 => {
             let tx = alloy::consensus::transaction::TxEip7702::rlp_decode_signed(&mut &bytes[1..])
                 .map(Box::new)
                 .map_err(TransactionDecodingError::Eip7702DecodingError)?;
+            let tx_hash = tx.hash();
             let signer = tx
                 .recover_signer()
                 .map_err(TransactionDecodingError::RecoverError)?;
-            Recovered::new_unchecked(tx, signer)
+            (*tx_hash, Recovered::new_unchecked(tx, signer))
         }
     };
-    Ok(tx)
+    Ok((tx_hash, tx))
 }
