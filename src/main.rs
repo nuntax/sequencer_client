@@ -4,8 +4,9 @@ use sequencer_client::reader::{SequencerMessage, SequencerReader};
 #[tokio::main()]
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed";
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
-    // use that subscriber to process traces emitted after this point
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::TRACE)
+        .finish(); // use that subscriber to process traces emitted after this point
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set global default subscriber");
     rustls::crypto::aws_lc_rs::default_provider()
@@ -21,14 +22,14 @@ async fn main() {
         }
         let msg = msg.unwrap();
         if let SequencerMessage::L2Message {
-            sequence_number,
-            tx_hash,
-            tx,
+            ref sequence_number,
+            ref tx_hash,
+            ref tx,
         } = msg
         {
             tracing::info!(
                 "Received L2Message with sequence number: {}, transaction: {tx_hash}",
-                sequence_number,
+                msg.block_number(),
             );
         }
     }
