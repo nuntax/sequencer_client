@@ -15,7 +15,11 @@ async fn main() {
 
     let mut stream = reader.into_stream();
     while let Some(msg) = stream.next().await {
-        tracing::info!("Received message: {:?}", msg.block_number());
+        if let Err(e) = &msg {
+            tracing::error!("Received error message: {:?}", e);
+            continue;
+        }
+        let msg = msg.unwrap();
         if let SequencerMessage::L2Message {
             sequence_number,
             tx_hash,

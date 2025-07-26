@@ -77,6 +77,16 @@ pub enum SequencerMessage {
         sequence_number: u64,
     },
 }
+#[derive(Debug)]
+pub enum SequencerMessageError {
+    /// Error while decoding a message from the Arbitrum sequencer.
+    MessageDecodingError(MessageDecodingError),
+    /// Error while decoding a transaction from the Arbitrum sequencer.
+    TransactionDecodingError(TransactionDecodingError),
+    /// Error indicating an issue with the WebSocket connection.
+    WebSocketError(tokio_tungstenite::tungstenite::Error),
+}
+
 impl SequencerMessage {
     /// Returns the block number corresponding to the sequence number.
     ///
@@ -113,7 +123,7 @@ pub struct SequencerReader {
     /// The WebSocket stream used to connect to the Arbitrum sequencer feed.
     pub ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     /// The sender part of the mpsc channel used to forward messages to the receiver.
-    pub tx: Sender<SequencerMessage>,
+    pub tx: Sender<Result<SequencerMessage, SequencerMessageError>>,
     /// The url
     url: String,
 }
@@ -121,11 +131,19 @@ pub struct SequencerReader {
 impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
-    pub async fn new(url: &str) -> (Self, Receiver<SequencerMessage>) {
+    pub async fn new(
+        url: &str,
+    ) -> (
+        Self,
+        Receiver<Result<SequencerMessage, SequencerMessageError>>,
+    ) {
         let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
-        let (tx, rx): (Sender<SequencerMessage>, Receiver<SequencerMessage>) = channel(1000);
+        let (tx, rx): (
+            Sender<Result<SequencerMessage, SequencerMessageError>>,
+            Receiver<Result<SequencerMessage, SequencerMessageError>>,
+        ) = channel(1000);
         (
             SequencerReader {
                 ws_stream,
@@ -174,18 +192,24 @@ impl SequencerReader {
                                     Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
                                         Ok(txs) => {
                                             if txs.is_empty() {
-                                                tracing::error!("Empty transaction batch received");
+                                                if let Err(e) = self.tx.try_send(Err(SequencerMessageError::MessageDecodingError(MessageDecodingError::UnsupportedMessageKind(3)))) {
+                                                    tracing::error!("Failed to send error to receiver: {}", e);
+                                                }
                                                 return;
                                             }
                                             txs
                                         }
                                         Err(e) => {
-                                            tracing::error!("Failed to parse L2 message: {:?}", e);
+                                            if let Err(send_err) = self.tx.try_send(Err(SequencerMessageError::MessageDecodingError(e))) {
+                                                tracing::error!("Failed to send error to receiver: {}", send_err);
+                                            }
                                             return;
                                         }
                                     },
                                     Err(_) => {
-                                        tracing::error!("Failed to decode base64 L2 message");
+                                        if let Err(e) = self.tx.try_send(Err(SequencerMessageError::MessageDecodingError(MessageDecodingError::UnsupportedMessageKind(3)))) {
+                                            tracing::error!("Failed to send error to receiver: {}", e);
+                                        }
                                         return;
                                     }
                                 };
@@ -195,7 +219,7 @@ impl SequencerReader {
                                         tx_hash,
                                         tx,
                                     };
-                                    if let Err(e) = self.tx.try_send(msg) {
+                                    if let Err(e) = self.tx.try_send(Ok(msg)) {
                                         tracing::error!(
                                             "Failed to send message to receiver: {}",
                                             e
@@ -209,7 +233,7 @@ impl SequencerReader {
                                 let msg = SequencerMessage::EndOfBlock {
                                     sequence_number: msg.sequence_number,
                                 };
-                                if let Err(e) = self.tx.try_send(msg) {
+                                if let Err(e) = self.tx.try_send(Ok(msg)) {
                                     tracing::error!(
                                         "Failed to send end of block message to receiver: {}",
                                         e
@@ -221,7 +245,7 @@ impl SequencerReader {
                                 let sequencer_msg = SequencerMessage::Other {
                                     sequence_number: msg.sequence_number,
                                 };
-                                if let Err(e) = self.tx.try_send(sequencer_msg) {
+                                if let Err(e) = self.tx.try_send(Ok(sequencer_msg)) {
                                     tracing::error!(
                                         "Failed to send non-transaction message to receiver: {}",
                                         e
@@ -233,6 +257,13 @@ impl SequencerReader {
                 }
                 Err(e) => {
                     tracing::error!("Error receiving message: {}", e);
+
+                    if let Err(send_err) = self
+                        .tx
+                        .try_send(Err(SequencerMessageError::WebSocketError(e)))
+                    {
+                        tracing::error!("Failed to send websocket error to receiver: {}", send_err);
+                    }
                     tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
                     (self.ws_stream, _) = tokio_tungstenite::connect_async(self.url.clone())
                         .await
@@ -244,7 +275,9 @@ impl SequencerReader {
 
     /// Returns a stream of SequencerMessage without blocking the current thread.
     /// This provides the same functionality as start_reading but as a stream.
-    pub fn into_stream(mut self) -> Pin<Box<dyn Stream<Item = SequencerMessage> + Send>> {
+    pub fn into_stream(
+        mut self,
+    ) -> Pin<Box<dyn Stream<Item = Result<SequencerMessage, SequencerMessageError>> + Send>> {
         Box::pin(async_stream::stream! {
             let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
 
@@ -281,18 +314,18 @@ impl SequencerReader {
                                         Ok(mut bytes) => match parse_l2_msg(&mut bytes, 0) {
                                             Ok(txs) => {
                                                 if txs.is_empty() {
-                                                    tracing::error!("Empty transaction batch received");
+                                                    yield Err(SequencerMessageError::MessageDecodingError(MessageDecodingError::UnsupportedMessageKind(3)));
                                                     continue;
                                                 }
                                                 txs
                                             }
                                             Err(e) => {
-                                                tracing::error!("Failed to parse L2 message: {:?}", e);
+                                                yield Err(SequencerMessageError::MessageDecodingError(e));
                                                 continue;
                                             }
                                         },
                                         Err(_) => {
-                                            tracing::error!("Failed to decode base64 L2 message");
+                                            yield Err(SequencerMessageError::MessageDecodingError(MessageDecodingError::UnsupportedMessageKind(3)));
                                             continue;
                                         }
                                     };
@@ -302,26 +335,28 @@ impl SequencerReader {
                                             tx_hash,
                                             tx,
                                         };
-                                        yield sequencer_msg;
+                                        yield Ok(sequencer_msg);
                                     }
                                 }
                                 6 => {
                                     let sequencer_msg = SequencerMessage::EndOfBlock {
                                         sequence_number: msg.sequence_number,
                                     };
-                                    yield sequencer_msg;
+                                    yield Ok(sequencer_msg);
                                 }
                                 _ => {
                                     let sequencer_msg = SequencerMessage::Other {
                                         sequence_number: msg.sequence_number,
                                     };
-                                    yield sequencer_msg;
+                                    yield Ok(sequencer_msg);
                                 }
                             }
                         }
                     }
                     Err(e) => {
+
                         tracing::error!("Error receiving message: {}", e);
+                        yield Err(SequencerMessageError::WebSocketError(e));
                         tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
                         (self.ws_stream, _) = tokio_tungstenite::connect_async(self.url.clone())
                             .await
