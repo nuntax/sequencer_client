@@ -61,7 +61,7 @@ struct Header {
     request_id: Value,
     base_fee_l1: Value,
 }
-
+#[derive(Debug)]
 pub enum SequencerMessage {
     /// Represents a message containing a single transaction.
     L2Message {
