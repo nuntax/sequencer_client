@@ -119,6 +119,7 @@ impl SequencerMessage {
 /// SequencerReader is the main struct of this library.
 /// It is used to connect to the Arbitrum sequencer feed and read messages from it.
 /// It then forwards the messages to a tokio mpsc, which can be used to receive the messages.
+#[derive(Debug)]
 pub struct SequencerReader {
     /// The WebSocket stream used to connect to the Arbitrum sequencer feed.
     pub ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
