@@ -1,27 +1,24 @@
 use alloy::consensus::transaction::Recovered;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
-use alloy::eips::Decodable2718;
+use alloy::hex::FromHex;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::ChainId;
 use alloy_primitives::U256;
-use alloy_primitives::address;
 use async_stream::stream;
 use base64::prelude::*;
 use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
 use futures_util::stream::Stream;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
-use tokio::{
-    net::TcpStream,
-    sync::mpsc::{Receiver, Sender, channel},
-};
+use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::types::transactions::ArbTxEnvelope;
@@ -65,8 +62,8 @@ struct Header {
     sender: String,
     block_number: u64,
     timestamp: u64,
-    request_id: B256,
-    base_fee_l1: U256,
+    request_id: Value,
+    base_fee_l1: Value,
 }
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,8 +126,6 @@ pub struct SequencerMessage {
 pub struct SequencerReader {
     /// The WebSocket stream used to connect to the Arbitrum sequencer feed.
     pub ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    /// The sender part of the mpsc channel used to forward messages to the receiver.
-    pub tx: Sender<Result<SequencerMessage>>,
     /// The url
     url: String,
     /// The chain ID of the Arbitrum network.
@@ -140,121 +135,21 @@ pub struct SequencerReader {
 impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
-    pub async fn new(url: &str, chain_id: ChainId) -> (Self, Receiver<Result<SequencerMessage>>) {
+    pub async fn new(url: &str, chain_id: ChainId) -> Self {
         let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
-        let (tx, rx): (
-            Sender<Result<SequencerMessage>>,
-            Receiver<Result<SequencerMessage>>,
-        ) = channel(1000);
-        (
-            SequencerReader {
-                ws_stream,
-                tx,
-                url: url.to_string(),
-                chain_id,
-            },
-            rx,
-        )
+
+        SequencerReader {
+            ws_stream,
+            url: url.to_string(),
+            chain_id,
+        }
     }
 
     /// Starts reading messages from the Arbitrum sequencer feed.
     /// This method runs in a loop and listens for incoming messages.
     /// It then parses the messages and forwards single transactions to the mpsc channel.
-    pub async fn start_reading(&mut self) {
-        let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
-
-        while let Some(message) = self.ws_stream.next().await {
-            match message {
-                Ok(raw_msg) => {
-                    if raw_msg.is_empty() {
-                        continue;
-                    }
-                    let as_txt = match raw_msg.into_text() {
-                        Ok(txt) => txt,
-                        Err(e) => {
-                            if let Err(send_err) = self.tx.try_send(Err(e.into())) {
-                                tracing::error!("Failed to send error to receiver: {}", send_err);
-                            }
-                            continue;
-                        }
-                    };
-                    let structured_data: Root = match serde_json::from_slice(as_txt.as_bytes()) {
-                        Ok(ret) => ret,
-                        Err(_) => {
-                            continue;
-                        }
-                    };
-
-                    for msg in structured_data.messages {
-                        if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
-                            continue;
-                        }
-
-                        if dedup_map.contains(&msg.sequence_number) {
-                            continue;
-                        }
-
-                        dedup_map.insert(msg.sequence_number);
-
-                        match parse_message(
-                            msg.message_with_meta_data.l1_incoming_message.clone(),
-                            self.chain_id,
-                            msg.sequence_number,
-                        ) {
-                            Ok(txs) => {
-                                for tx in txs {
-                                    if let Err(e) = self.tx.try_send(Ok(SequencerMessage {
-                                        sequence_number: msg.sequence_number,
-                                        tx,
-                                    })) {
-                                        tracing::error!(
-                                            "Failed to send message to receiver: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to parse message with sequence number: {}",
-                                    msg.sequence_number
-                                );
-                                if let Err(send_err) = self.tx.try_send(Err(e)) {
-                                    tracing::error!(
-                                        "Failed to send parse error to receiver: {}",
-                                        send_err
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error receiving message: {}", e);
-                    if let Err(send_err) = self.tx.try_send(Err(e.into())) {
-                        tracing::error!("Failed to send websocket error to receiver: {}", send_err);
-                    }
-                    tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
-                    match tokio_tungstenite::connect_async(self.url.clone()).await {
-                        Ok((ws_stream, _)) => {
-                            self.ws_stream = ws_stream;
-                        }
-                        Err(reconnect_err) => {
-                            if let Err(send_err) = self.tx.try_send(Err(reconnect_err.into())) {
-                                tracing::error!(
-                                    "Failed to send reconnect error to receiver: {}",
-                                    send_err
-                                );
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     /// Converts the SequencerReader into a stream of SequencerMessage results.
     /// This provides an alternative to using the mpsc channel approach.
@@ -294,6 +189,7 @@ impl SequencerReader {
                             }
                             Err(e) => {
                                 tracing::error!("Failed to parse JSON: {}", e);
+                                tracing::error!("message: {}", as_txt);
                                 continue;
                             }
                         };
@@ -317,7 +213,6 @@ impl SequencerReader {
                             match parse_message(
                                 msg.message_with_meta_data.l1_incoming_message.clone(),
                                 self.chain_id,
-                                msg.sequence_number,
                             ) {
                                 Ok(txs) => {
                                     tracing::debug!("Successfully parsed {} transactions", txs.len());
@@ -331,7 +226,7 @@ impl SequencerReader {
                                 }
                                 Err(e) => {
                                     tracing::error!(
-                                        "Failed to parse message with sequence number {}: {}",
+                                        "Failed to parse message with sequence number {}: {:?}",
                                         msg.sequence_number,
                                         e
                                     );
@@ -367,7 +262,6 @@ impl SequencerReader {
 pub fn parse_message(
     msg: L1IncomingMessage,
     chain_id: ChainId,
-    sequence_number: u64,
 ) -> Result<Vec<Recovered<ArbTxEnvelope>>> {
     let msg_type = MessageType::from_u8(msg.header.kind);
     tracing::debug!("Parsing message type: {:?}", msg_type);
@@ -401,14 +295,28 @@ pub fn parse_message(
             todo!()
         }
         MessageType::SubmitRetryable => {
-            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
+            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
             let buffer = buffer_vec.as_mut_slice();
+            //log the whole message and the buffer
+            tracing::debug!("Retyrable message: {:?}", msg);
+            tracing::debug!("Retryable message buffer: {}", hex::encode(&buffer));
+
             let tx = parse_submit_retryable(
                 &mut &*buffer,
                 chain_id,
                 Address::from_str(&msg.header.sender).unwrap(),
-                msg.header.request_id,
-                Some(msg.header.base_fee_l1),
+                B256::from_hex(
+                    msg.header
+                        .request_id
+                        .as_str()
+                        .ok_or(eyre!("failed to deserialize request_id"))?,
+                )?,
+                Some(U256::from(
+                    msg.header
+                        .base_fee_l1
+                        .as_u64()
+                        .ok_or(eyre!("failed to deserialize base fee l1"))?,
+                )),
             )?;
             Ok(vec![Recovered::new_unchecked(
                 ArbTxEnvelope::ArbRetryable(tx.inner().clone()),
@@ -416,7 +324,8 @@ pub fn parse_message(
             )])
         }
         _ => {
-            todo!()
+            tracing::warn!("not yet supported message type: {:?}", msg_type);
+            Ok(Vec::new())
         }
     }
 }
@@ -428,7 +337,7 @@ pub fn parse_submit_retryable(
     request_id: B256,
     l1_base_fee: Option<U256>,
 ) -> Result<Recovered<TxSubmitRetryable>> {
-    let mut tx = TxSubmitRetryable::decode_2718(msg)?;
+    let mut tx = TxSubmitRetryable::rlp_decode(msg)?;
     tx.finalize_after_decode(Some(chain_id), Some(request_id), sender, l1_base_fee);
     let recovered = Recovered::new_unchecked(tx, sender);
     Ok(recovered)
@@ -491,7 +400,7 @@ fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<Recovered<ArbTxEnvel
             // deprecated heartbeat message, we can ignore it
         }
         L2MessageKind::NonmutatingCall | L2MessageKind::SignedCompressedTx => {
-            return Err(eyre::eyre!("Unsupported L2 message kind: {:?}", kind).into());
+            return Err(eyre::eyre!("Unsupported L2 message kind: {:?}", kind));
         }
 
         L2MessageKind::Batch => {
@@ -525,7 +434,7 @@ fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<Recovered<ArbTxEnvel
         }
 
         _ => {
-            return Err(eyre!("Unsupported L2 message kind: {:?}", kind).into());
+            return Err(eyre!("Unsupported L2 message kind: {:?}", kind));
         }
     }
 

@@ -1,12 +1,13 @@
-use std::ops::Add;
-
 use alloy::eips::{
     Decodable2718, Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization,
 };
 use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxHash, TxKind, U256, keccak256};
-use alloy_rlp::{BufMut, Decodable, Encodable, Header};
+use alloy_rlp::{BufMut, Decodable, Encodable};
+use bytes::Buf;
 use serde::{Deserialize, Serialize};
+
+use crate::types::transactions::util::{decode, decode_rest_with_len};
 ///Main module for the sequencer reader crate.
 ///
 ///
@@ -25,7 +26,7 @@ pub struct TxSubmitRetryable {
 
     deposit_value: U256,
     gas_fee_cap: U256, //maxFeePerGas
-    gas_limit: u64,
+    gas_limit: U256,
     retry_to: Option<Address>,
     retry_value: U256,    //call value
     beneficiary: Address, //callvalue refund address
@@ -82,23 +83,30 @@ impl TxSubmitRetryable {
     }
 
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let retry_to_decoded: Address = Decodable::decode(buf)?;
+        println!("{:?}", buf.len());
+        buf.advance(12);
+        let retry_to_decoded: Address = decode(buf)?;
+        // if retry_to is zero address, we set it to None
         let retry_to = if retry_to_decoded == Address::default() {
             None
         } else {
             Some(retry_to_decoded)
         };
-
         Ok(Self {
             retry_to,
-            retry_value: Decodable::decode(buf)?,
-            deposit_value: Decodable::decode(buf)?,
-            max_submission_fee: Decodable::decode(buf)?,
-            fee_refund_address: Decodable::decode(buf)?,
-            beneficiary: Decodable::decode(buf)?,
-            gas_limit: Decodable::decode(buf)?,
-            gas_fee_cap: Decodable::decode(buf)?,
-            retry_data: Decodable::decode(buf)?,
+            retry_value: decode(buf)?,
+            deposit_value: decode(buf)?,
+            max_submission_fee: decode(buf).inspect(|_| {
+                //we have to advance the buffer here because addresses are 20 bytes but nitro for some reason encodes them as 32 bytes, maybe its some rlp thing?
+                buf.advance(12);
+            })?,
+            fee_refund_address: decode(buf).inspect(|_| {
+                buf.advance(12);
+            })?,
+            beneficiary: decode(buf)?,
+            gas_limit: decode(buf)?,
+            gas_fee_cap: decode(buf)?,
+            retry_data: decode_rest_with_len(buf)?,
             chain_id: None, // chain_id is not part of the retryable transaction encoding
             request_id: None, // request_id is not part of the retryable transaction encoding
             from: Address::default(), // from is not part of the retryable transaction encoding
@@ -123,22 +131,7 @@ impl TxSubmitRetryable {
         self.rlp_encode_fields(out);
     }
     pub fn rlp_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let header = Header::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let remaining = buf.len();
-
-        if header.payload_length > remaining {
-            return Err(alloy_rlp::Error::InputTooShort);
-        }
-
         let this = Self::rlp_decode_fields(buf)?;
-
-        if buf.len() + header.payload_length != remaining {
-            return Err(alloy_rlp::Error::UnexpectedLength);
-        }
-
         Ok(this)
     }
 }
@@ -176,7 +169,7 @@ impl Transaction for TxSubmitRetryable {
 
     #[doc = " Get `gas_limit`."]
     fn gas_limit(&self) -> u64 {
-        self.gas_limit
+        self.gas_limit.to()
     }
 
     #[doc = " Get `gas_price`."]
@@ -203,6 +196,7 @@ impl Transaction for TxSubmitRetryable {
         self.gas_fee_cap.to()
     }
     /// Dont use this for retryable transactions, it returns 0.
+    #[allow(unused_variables)]
     fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
         0
     }
@@ -278,5 +272,26 @@ impl Encodable2718 for TxSubmitRetryable {
     fn encode_2718(&self, out: &mut dyn BufMut) {
         out.put_u8(self.ty());
         self.rlp_encode(out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_decode_submit_retryable() {
+        let encoded = hex::decode(
+            "000000000000000000000000e35e9842fceaca96570b734083f4a58e8f7c5f2a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000470de4df820000000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000007ae8551be970cb1cca11dd7a11f47ae82e70e6700000000000000000000000007ae8551be970cb1cca11dd7a11f47ae82e70e6700000000000000000000000000000000000000000000000000000000001e8480000000000000000000000000000000000000000000000000000000012a05f2000000000000000000000000000000000000000000000000000000000000000044493a4f849da3a5608e0f6f040b2c06838aea0ff9ac2369105d0a7bcf8b261c6fb4f7ef300000000000000000000000000000000000000000000000000000000000000000",
+        ).unwrap();
+        let mut buf = &encoded[..];
+        //print out the buffer
+        println!(
+            "Buffer: {:?}, length: {}",
+            hex::encode(&buf),
+            hex::encode(&buf).len()
+        );
+
+        let tx: TxSubmitRetryable = TxSubmitRetryable::decode(&mut buf).unwrap();
+        println!("Decoded transaction: {:?}", tx);
     }
 }

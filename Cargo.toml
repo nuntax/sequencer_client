@@ -1,6 +1,6 @@
 [package]
 name = "sequencer_client"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2024"
 license-file = "LICENSE"
 description = "A library for reading the Arbitrum Sequencer feed."
@@ -36,3 +36,5 @@ async-stream = "0.3.6"
 fastwebsockets = "0.10.0"
 alloy-consensus = "1.0.24"
 eyre = "0.6.12"
+color-eyre = "0.6.5"
+bytes = "1.10.1"

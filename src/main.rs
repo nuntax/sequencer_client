@@ -1,6 +1,5 @@
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
-
 #[tokio::main()]
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed";
@@ -18,12 +17,7 @@ async fn main() {
 
     tracing::info!("Connecting to sequencer at {}", url);
 
-    let (reader, _) = match SequencerReader::new(url, 42161).await {
-        (reader, rx) => {
-            tracing::info!("Successfully connected to sequencer");
-            (reader, rx)
-        }
-    };
+    let reader = SequencerReader::new(url, 42161).await;
 
     let mut stream = reader.into_stream();
     tracing::info!("Created stream, starting to read messages...");

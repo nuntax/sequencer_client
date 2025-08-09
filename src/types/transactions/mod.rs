@@ -1,13 +1,10 @@
-use alloy_consensus::{
-    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
-};
+use alloy_consensus::{Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
 use alloy_primitives::TxHash;
 pub use submit_retryable::TxSubmitRetryable;
 mod submit_retryable;
 mod util;
 #[derive(Debug, Clone, TransactionEnvelope)]
 #[envelope(tx_type_name = ArbTxType)]
-
 pub enum ArbTxEnvelope {
     #[envelope(ty = 0)]
     Legacy(Signed<TxLegacy>),
