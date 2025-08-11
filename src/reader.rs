@@ -5,16 +5,21 @@ use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::ChainId;
 use alloy_primitives::U256;
+use alloy_primitives::keccak256;
+use alloy_rlp::Encodable;
 use async_stream::stream;
 use base64::prelude::*;
+use core::hash;
 use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
 use futures_util::stream::Stream;
+use http::request;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
+use tokio_tungstenite::tungstenite::buffer;
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -22,7 +27,10 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::types::transactions::ArbTxEnvelope;
+use crate::types::transactions::TxDeposit;
 use crate::types::transactions::TxSubmitRetryable;
+use crate::types::transactions::unsigned::UnsignedTx;
+use crate::types::transactions::unsigned::parse_unsigned_tx;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,6 +298,42 @@ pub fn parse_message(
         MessageType::EndOfBlock => {
             todo!()
         }
+        MessageType::EthDeposit => {
+            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
+            let buffer = buffer_vec.as_mut_slice();
+            tracing::debug!("EthDeposit message buffer: {}", hex::encode(&buffer));
+            let request_id = B256::from_hex(
+                msg.header
+                    .request_id
+                    .as_str()
+                    .ok_or(eyre!("failed to deserialize request_id"))?,
+            )?;
+            let mut hash_buffer: Vec<u8> = Vec::new();
+            request_id.encode(&mut hash_buffer);
+            U256::ZERO.to_be_bytes::<32>().encode(&mut hash_buffer);
+            let unsigned_request_id = keccak256(&hash_buffer);
+            let unsigned_tx = parse_unsigned_tx(
+                &mut &*buffer,
+                Address::from_str(&msg.header.sender).unwrap(),
+                request_id,
+                U256::from(chain_id),
+            )?;
+            hash_buffer.clear();
+            request_id.encode(&mut hash_buffer);
+            U256::ONE.to_be_bytes::<32>().encode(&mut hash_buffer);
+            let deposit_request_id = keccak256(&hash_buffer);
+            let deposit_tx = TxDeposit::decode_fields_sequencer(
+                U256::from(chain_id),
+                unsigned_request_id,
+                Address::from_str(&msg.header.sender).unwrap(),
+                unsigned_tx,
+            )?;
+            let recovered = Recovered::new_unchecked(
+                ArbTxEnvelope::DepositTx(deposit_tx),
+                Address::from_str(&msg.header.sender).unwrap(),
+            );
+            Ok(vec![recovered])
+        }
         MessageType::SubmitRetryable => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
             let buffer = buffer_vec.as_mut_slice();
@@ -307,15 +351,15 @@ pub fn parse_message(
                         .as_str()
                         .ok_or(eyre!("failed to deserialize request_id"))?,
                 )?,
-                Some(U256::from(
+                U256::from(
                     msg.header
                         .base_fee_l1
                         .as_u64()
                         .ok_or(eyre!("failed to deserialize base fee l1"))?,
-                )),
+                ),
             )?;
             Ok(vec![Recovered::new_unchecked(
-                ArbTxEnvelope::ArbRetryable(tx.inner().clone()),
+                ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone()),
                 tx.signer(),
             )])
         }
@@ -331,15 +375,15 @@ pub fn parse_submit_retryable(
     chain_id: ChainId,
     sender: Address,
     request_id: B256,
-    l1_base_fee: Option<U256>,
+    l1_base_fee: U256,
 ) -> Result<Recovered<TxSubmitRetryable>> {
-    let mut tx = TxSubmitRetryable::decode_fields_sequencer(msg)?;
-    tx.finalize_after_decode(
-        Some(U256::from(chain_id)),
-        Some(U256::from_be_bytes(request_id.0)),
+    let tx = TxSubmitRetryable::decode_fields_sequencer(
+        msg,
+        U256::from(chain_id),
+        U256::from_be_bytes(request_id.0),
         sender,
         l1_base_fee,
-    );
+    )?;
     let recovered = Recovered::new_unchecked(tx, sender);
 
     tracing::info!(
@@ -354,7 +398,8 @@ pub fn parse_submit_retryable(
 const MAX_BATCH_DEPTH: u32 = 16;
 const MAX_L2_MESSAGE_SIZE: u64 = 256 * 1024; // 256KB
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+
 /// L2MessageKind represents the kind of message that can be received from the Arbitrum sequencer.
 pub enum L2MessageKind {
     /// Unsigned user transaction. Only here for completeness.

@@ -40,12 +40,18 @@ async fn main() {
                     sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
                         tracing::info!("Received EIP-7702 transaction with hash {}", signed.hash());
                     }
-                    sequencer_client::types::transactions::ArbTxEnvelope::ArbRetryable(
+                    sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
                         tx_submit_retryable,
                     ) => {
                         tracing::info!(
                             "Received ArbRetryable transaction with hash {}",
                             tx_submit_retryable.tx_hash()
+                        );
+                    }
+                    sequencer_client::types::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                        tracing::info!(
+                            "Received deposit transaction with hash {}",
+                            tx_deposit.tx_hash()
                         );
                     }
                 },
