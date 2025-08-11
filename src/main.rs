@@ -22,55 +22,37 @@ async fn main() {
     let mut stream = reader.into_stream();
     tracing::info!("Created stream, starting to read messages...");
 
-    let mut count = 0;
     let timeout = std::time::Duration::from_secs(30);
 
     loop {
         match tokio::time::timeout(timeout, stream.next()).await {
-            Ok(Some(msg_result)) => {
-                count += 1;
-                tracing::info!("Received message #{}", count);
-
-                match msg_result {
-                    Ok(msg) => match msg.tx.inner() {
-                        sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
-                            tracing::info!(
-                                "Received legacy transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
-                            tracing::info!(
-                                "Received EIP-2930 transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
-                            tracing::info!(
-                                "Received EIP-1559 transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
-                            tracing::info!(
-                                "Received EIP-7702 transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::ArbRetryable(
-                            tx_submit_retryable,
-                        ) => {
-                            tracing::info!(
-                                "Received ArbRetryable transaction with hash {}",
-                                tx_submit_retryable.tx_hash()
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("Error in received message: {:?}", e);
+            Ok(Some(msg_result)) => match msg_result {
+                Ok(msg) => match msg.tx.inner() {
+                    sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
+                        tracing::info!("Received legacy transaction with hash {}", signed.hash());
                     }
+                    sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
+                        tracing::info!("Received EIP-2930 transaction with hash {}", signed.hash());
+                    }
+                    sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
+                        tracing::info!("Received EIP-1559 transaction with hash {}", signed.hash());
+                    }
+                    sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
+                        tracing::info!("Received EIP-7702 transaction with hash {}", signed.hash());
+                    }
+                    sequencer_client::types::transactions::ArbTxEnvelope::ArbRetryable(
+                        tx_submit_retryable,
+                    ) => {
+                        tracing::info!(
+                            "Received ArbRetryable transaction with hash {}",
+                            tx_submit_retryable.tx_hash()
+                        );
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("Error in received message: {:?}", e);
                 }
-            }
+            },
             Ok(None) => {
                 tracing::warn!("Stream ended, exiting");
                 break;

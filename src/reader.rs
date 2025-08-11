@@ -147,10 +147,6 @@ impl SequencerReader {
         }
     }
 
-    /// Starts reading messages from the Arbitrum sequencer feed.
-    /// This method runs in a loop and listens for incoming messages.
-    /// It then parses the messages and forwards single transactions to the mpsc channel.
-
     /// Converts the SequencerReader into a stream of SequencerMessage results.
     /// This provides an alternative to using the mpsc channel approach.
     pub fn into_stream(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
@@ -337,9 +333,21 @@ pub fn parse_submit_retryable(
     request_id: B256,
     l1_base_fee: Option<U256>,
 ) -> Result<Recovered<TxSubmitRetryable>> {
-    let mut tx = TxSubmitRetryable::rlp_decode(msg)?;
-    tx.finalize_after_decode(Some(chain_id), Some(request_id), sender, l1_base_fee);
+    let mut tx = TxSubmitRetryable::decode_fields_sequencer(msg)?;
+    tx.finalize_after_decode(
+        Some(U256::from(chain_id)),
+        Some(U256::from_be_bytes(request_id.0)),
+        sender,
+        l1_base_fee,
+    );
     let recovered = Recovered::new_unchecked(tx, sender);
+
+    tracing::info!(
+        "Parsed TxSubmitRetryable: chain_id: {}, request_id: {}, sender: {}",
+        chain_id,
+        request_id,
+        sender
+    );
     Ok(recovered)
 }
 
