@@ -3,7 +3,7 @@ use alloy_rlp::Decodable;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::{reader::L2MessageKind, types::transactions::unsigned};
+use crate::reader::L2MessageKind;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsignedTx {
     UserTx(UnsignedUserTx),

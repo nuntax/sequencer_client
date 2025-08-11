@@ -12,7 +12,6 @@ use alloy_primitives::Selector;
 use alloy_primitives::TxHash;
 use alloy_primitives::TxKind;
 use alloy_primitives::{Address, U256, keccak256};
-use alloy_rlp::Buf;
 use alloy_rlp::Decodable;
 use alloy_rlp::Encodable;
 use alloy_rlp::Header;
@@ -20,10 +19,9 @@ use bytes::BufMut;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::reader::L2MessageKind;
 use crate::types::transactions::{
     ArbTxType,
-    unsigned::{self, parse_unsigned_tx},
+    unsigned::{self},
 };
 
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]

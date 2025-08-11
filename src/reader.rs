@@ -9,27 +9,22 @@ use alloy_primitives::keccak256;
 use alloy_rlp::Encodable;
 use async_stream::stream;
 use base64::prelude::*;
-use core::hash;
 use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
 use futures_util::stream::Stream;
-use http::request;
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
-use tokio_tungstenite::tungstenite::buffer;
-
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::types::transactions::ArbTxEnvelope;
 use crate::types::transactions::TxDeposit;
 use crate::types::transactions::TxSubmitRetryable;
-use crate::types::transactions::unsigned::UnsignedTx;
 use crate::types::transactions::unsigned::parse_unsigned_tx;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -315,7 +310,7 @@ pub fn parse_message(
             let unsigned_tx = parse_unsigned_tx(
                 &mut &*buffer,
                 Address::from_str(&msg.header.sender).unwrap(),
-                request_id,
+                unsigned_request_id,
                 U256::from(chain_id),
             )?;
             hash_buffer.clear();
@@ -324,7 +319,7 @@ pub fn parse_message(
             let deposit_request_id = keccak256(&hash_buffer);
             let deposit_tx = TxDeposit::decode_fields_sequencer(
                 U256::from(chain_id),
-                unsigned_request_id,
+                deposit_request_id,
                 Address::from_str(&msg.header.sender).unwrap(),
                 unsigned_tx,
             )?;
