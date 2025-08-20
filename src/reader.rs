@@ -4,9 +4,8 @@ use alloy::hex::FromHex;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::ChainId;
+use alloy_primitives::FixedBytes;
 use alloy_primitives::U256;
-use alloy_primitives::keccak256;
-use alloy_rlp::Encodable;
 use async_stream::stream;
 use base64::prelude::*;
 use eyre::Result;
@@ -25,8 +24,6 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::types::transactions::ArbTxEnvelope;
 use crate::types::transactions::TxDeposit;
 use crate::types::transactions::TxSubmitRetryable;
-use crate::types::transactions::unsigned::parse_unsigned_tx;
-
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Root {
@@ -153,11 +150,11 @@ impl SequencerReader {
     /// Converts the SequencerReader into a stream of SequencerMessage results.
     /// This provides an alternative to using the mpsc channel approach.
     pub fn into_stream(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
-        tracing::info!("Creating sequencer message stream");
+        tracing::debug!("Creating sequencer message stream");
 
         Box::pin(stream! {
             let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
-            tracing::info!("Stream started, waiting for messages");
+            tracing::debug!("Stream started, waiting for messages");
 
             while let Some(message) = self.ws_stream.next().await {
                 tracing::debug!("Received websocket message");
@@ -241,7 +238,7 @@ impl SequencerReader {
                         tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
                         match tokio_tungstenite::connect_async(self.url.clone()).await {
                             Ok((ws_stream, _)) => {
-                                tracing::info!("Successfully reconnected to WebSocket");
+                                tracing::debug!("Successfully reconnected to WebSocket");
                                 self.ws_stream = ws_stream;
                             }
                             Err(reconnect_err) => {
@@ -253,7 +250,7 @@ impl SequencerReader {
                     }
                 }
             }
-            tracing::info!("WebSocket stream ended");
+            tracing::debug!("WebSocket stream ended");
         })
     }
 }
@@ -296,37 +293,22 @@ pub fn parse_message(
         MessageType::EthDeposit => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
             let buffer = buffer_vec.as_mut_slice();
-            tracing::debug!("EthDeposit message buffer: {}", hex::encode(&buffer));
-            let request_id = B256::from_hex(
-                msg.header
-                    .request_id
-                    .as_str()
-                    .ok_or(eyre!("failed to deserialize request_id"))?,
-            )?;
-            let mut hash_buffer: Vec<u8> = Vec::new();
-            request_id.encode(&mut hash_buffer);
-            U256::ZERO.to_be_bytes::<32>().encode(&mut hash_buffer);
-            let unsigned_request_id = keccak256(&hash_buffer);
-            let unsigned_tx = parse_unsigned_tx(
+            tracing::debug!("Buffer: {}", hex::encode(&buffer));
+            let tx = TxDeposit::decode_fields_sequencer(
                 &mut &*buffer,
-                Address::from_str(&msg.header.sender).unwrap(),
-                unsigned_request_id,
                 U256::from(chain_id),
+                FixedBytes::from_hex(
+                    msg.header
+                        .request_id
+                        .as_str()
+                        .ok_or(eyre!("failed to deserialize request_id"))?,
+                )?,
+                msg.header.sender.parse()?,
             )?;
-            hash_buffer.clear();
-            request_id.encode(&mut hash_buffer);
-            U256::ONE.to_be_bytes::<32>().encode(&mut hash_buffer);
-            let deposit_request_id = keccak256(&hash_buffer);
-            let deposit_tx = TxDeposit::decode_fields_sequencer(
-                U256::from(chain_id),
-                deposit_request_id,
-                Address::from_str(&msg.header.sender).unwrap(),
-                unsigned_tx,
-            )?;
-            let recovered = Recovered::new_unchecked(
-                ArbTxEnvelope::DepositTx(deposit_tx),
-                Address::from_str(&msg.header.sender).unwrap(),
-            );
+            tracing::debug!("Parsed TxDeposit: {:?}", tx);
+            tracing::debug!("TxDeposit hash: {}", tx.tx_hash());
+            let recovered =
+                Recovered::new_unchecked(ArbTxEnvelope::DepositTx(tx), msg.header.sender.parse()?);
             Ok(vec![recovered])
         }
         MessageType::SubmitRetryable => {
@@ -381,7 +363,7 @@ pub fn parse_submit_retryable(
     )?;
     let recovered = Recovered::new_unchecked(tx, sender);
 
-    tracing::info!(
+    tracing::debug!(
         "Parsed TxSubmitRetryable: chain_id: {}, request_id: {}, sender: {}",
         chain_id,
         request_id,

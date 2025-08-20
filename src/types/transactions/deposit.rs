@@ -19,18 +19,15 @@ use bytes::BufMut;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::types::transactions::{
-    ArbTxType,
-    unsigned::{self},
-};
+use crate::types::transactions::ArbTxType;
 
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct TxDeposit {
     pub chain_id: U256,
     pub request_id: FixedBytes<32>,
+    pub from: Address,
     pub to: Address,
     pub value: U256,
-    pub _inner_tx: Option<unsigned::UnsignedTx>, //not used canonically, but maybe useful for some applications
 }
 
 impl TxDeposit {
@@ -40,17 +37,19 @@ impl TxDeposit {
         keccak256(buffer)
     }
     pub fn decode_fields_sequencer(
+        buf: &mut &[u8],
         chain_id: U256,
         request_id: FixedBytes<32>,
-        to: Address,
-        unsigned_tx: unsigned::UnsignedTx,
+        from: Address,
     ) -> Result<Self> {
+        let value: U256 = Decodable::decode(buf)?;
+        let to: Address = Decodable::decode(buf)?;
         Ok(Self {
             chain_id,
             request_id: request_id,
+            from,
             to,
-            value: unsigned_tx.value(),
-            _inner_tx: Some(unsigned_tx), //not used canonically, but maybe useful for some applications
+            value,
         })
     }
     pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
@@ -89,14 +88,15 @@ impl TxDeposit {
     pub fn rlp_decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let chain_id: U256 = Decodable::decode(buf)?;
         let request_id: FixedBytes<32> = Decodable::decode(buf)?;
+        let from: Address = Decodable::decode(buf)?;
         let to: Address = Decodable::decode(buf)?;
         let value: U256 = Decodable::decode(buf)?;
         Ok(Self {
             chain_id,
             request_id,
+            from,
             to,
             value,
-            _inner_tx: None, //not used canonically, but maybe useful for some applications
         })
     }
 }
