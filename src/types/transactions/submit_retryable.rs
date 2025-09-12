@@ -337,7 +337,6 @@ mod tests {
     use alloy_primitives::address;
     #[test]
     fn test_decode_submit_retryable() {
-        //this test first decodes the tx from the sequencer, then encodes it back and checks if the hash matches the original tx hash.
         //https://arbiscan.io/tx/0x6d3e1568b91fdc70f2e267c315d0b8387fe08552199028ea8b5eac336f6c1f4a
         let encoded = hex::decode(
             "0000000000000000000000001f4ef5dee700ad835a36b160ad9caeb4b80c0e500000000000000000000000000000000000000000000000015af1d78b58c400000000000000000000000000000000000000000000000000015af1da51da16ee60000000000000000000000000000000000000000000000000000001462397986000000000000000000000000008f9c294928efd8b76498c360a179927910f35ce0000000000000000000000001f4ef5dee700ad835a36b160ad9caeb4b80c0e500000000000000000000000000000000000000000000000000000000000006b7a00000000000000000000000000000000000000000000000000000000039387000000000000000000000000000000000000000000000000000000000000000000",
@@ -348,12 +347,9 @@ mod tests {
             hex::encode(&buf),
             hex::encode(&buf).len()
         );
-        let request_id_bytes =
-            hex::decode("00000000000000000000000000000000000000000000000000000000001fa928")
-                .unwrap();
         let from = address!("0x1A0ac294928EFd8b76498c360A179927910F46dF");
         let l1_base_fee = U256::from(236119188);
-        let request_id = U256::from_be_slice(&request_id_bytes);
+        let request_id = U256::from(0x1fa928u64);
 
         let tx: TxSubmitRetryable = TxSubmitRetryable::decode_fields_sequencer(
             &mut buf,

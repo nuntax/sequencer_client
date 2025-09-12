@@ -17,7 +17,7 @@ async fn main() {
 
     tracing::info!("Connecting to sequencer at {}", url);
 
-    let reader = SequencerReader::new(url, 42161, 1).await;
+    let reader = SequencerReader::new(url, 42161, 10).await;
 
     let mut stream = reader.into_stream();
     tracing::info!("Created stream, starting to read messages...");

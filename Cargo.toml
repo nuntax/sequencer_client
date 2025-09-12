@@ -1,3 +1,12 @@
+[[bin]]
+name = "single"
+path = "src/main.rs"
+
+[[bin]]
+name = "multi"
+path = "src/main2.rs"
+
+
 [package]
 name = "sequencer_client"
 version = "0.3.2"

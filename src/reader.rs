@@ -130,12 +130,15 @@ pub struct SequencerReader {
     url: String,
     /// The chain ID of the Arbitrum network.
     pub chain_id: ChainId,
+    /// Number of parallel connections to maintain for lower latency
+    pub connections: u32,
 }
 
 impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
     /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
-    pub async fn new(url: &str, chain_id: ChainId) -> Self {
+    pub async fn new(url: &str, chain_id: ChainId, connections: u32) -> Self {
+        let connections = connections.max(1); // Ensure at least 1 connection
         let (ws_stream, _) = tokio_tungstenite::connect_async(url)
             .await
             .expect("Failed to connect");
@@ -144,107 +147,230 @@ impl SequencerReader {
             ws_stream,
             url: url.to_string(),
             chain_id,
+            connections,
         }
     }
 
     /// Converts the SequencerReader into a stream of SequencerMessage results.
     /// This provides an alternative to using the mpsc channel approach.
     pub fn into_stream(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
-        tracing::debug!("Creating sequencer message stream");
+        tracing::debug!(
+            "Creating sequencer message stream with {} connections",
+            self.connections
+        );
 
         Box::pin(stream! {
             let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
             tracing::debug!("Stream started, waiting for messages");
 
-            while let Some(message) = self.ws_stream.next().await {
-                tracing::debug!("Received websocket message");
+            if self.connections == 1 {
+                // Single connection mode - use existing logic
+                while let Some(message) = self.ws_stream.next().await {
+                    tracing::debug!("Received websocket message");
 
-                match message {
-                    Ok(raw_msg) => {
-                        if raw_msg.is_empty() {
-                            tracing::debug!("Received empty message, skipping");
-                            continue;
-                        }
-
-                        let as_txt = match raw_msg.into_text() {
-                            Ok(txt) => {
-                                tracing::debug!("Parsed websocket message text of length: {}", txt.len());
-                                txt
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to parse websocket message text: {}", e);
-                                yield Err(e.into());
-                                continue;
-                            }
-                        };
-
-                        let structured_data: Root = match serde_json::from_slice::<Root>(as_txt.as_bytes()) {
-                            Ok(ret) => {
-                                tracing::debug!("Parsed JSON with {} messages", ret.messages.len());
-                                ret
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to parse JSON: {}", e);
-                                tracing::error!("message: {}", as_txt);
-                                continue;
-                            }
-                        };
-
-                        for msg in structured_data.messages {
-                            tracing::debug!("Processing message with sequence number: {}", msg.sequence_number);
-
-                            if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
-                                tracing::debug!("Message too large, skipping");
+                    match message {
+                        Ok(raw_msg) => {
+                            if raw_msg.is_empty() {
+                                tracing::debug!("Received empty message, skipping");
                                 continue;
                             }
 
-                            if dedup_map.contains(&msg.sequence_number) {
-                                tracing::debug!("Duplicate message, skipping");
-                                continue;
-                            }
-
-                            dedup_map.insert(msg.sequence_number);
-                            tracing::debug!("Message type: {}", msg.message_with_meta_data.l1_incoming_message.header.kind);
-
-                            match parse_message(
-                                msg.message_with_meta_data.l1_incoming_message.clone(),
-                                self.chain_id,
-                            ) {
-                                Ok(txs) => {
-                                    tracing::debug!("Successfully parsed {} transactions", txs.len());
-                                    for tx in txs {
-                                        tracing::debug!("Yielding transaction");
-                                        yield Ok(SequencerMessage {
-                                            sequence_number: msg.sequence_number,
-                                            tx,
-                                        });
-                                    }
+                            let as_txt = match raw_msg.into_text() {
+                                Ok(txt) => {
+                                    tracing::debug!("Parsed websocket message text of length: {}", txt.len());
+                                    txt
                                 }
                                 Err(e) => {
-                                    tracing::error!(
-                                        "Failed to parse message with sequence number {}: {:?}",
-                                        msg.sequence_number,
-                                        e
-                                    );
-                                    yield Err(e);
+                                    tracing::error!("Failed to parse websocket message text: {}", e);
+                                    yield Err(e.into());
+                                    continue;
+                                }
+                            };
+
+                            let structured_data: Root = match serde_json::from_slice::<Root>(as_txt.as_bytes()) {
+                                Ok(ret) => {
+                                    tracing::debug!("Parsed JSON with {} messages", ret.messages.len());
+                                    ret
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to parse JSON: {}", e);
+                                    tracing::error!("message: {}", as_txt);
+                                    continue;
+                                }
+                            };
+
+                            for msg in structured_data.messages {
+                                tracing::debug!("Processing message with sequence number: {}", msg.sequence_number);
+
+                                if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
+                                    tracing::debug!("Message too large, skipping");
+                                    continue;
+                                }
+
+                                if dedup_map.contains(&msg.sequence_number) {
+                                    tracing::debug!("Duplicate message, skipping");
+                                    continue;
+                                }
+
+                                dedup_map.insert(msg.sequence_number);
+                                tracing::debug!("Message type: {}", msg.message_with_meta_data.l1_incoming_message.header.kind);
+
+                                match parse_message(
+                                    msg.message_with_meta_data.l1_incoming_message.clone(),
+                                    self.chain_id,
+                                ) {
+                                    Ok(txs) => {
+                                        tracing::debug!("Successfully parsed {} transactions", txs.len());
+                                        for tx in txs {
+                                            tracing::debug!("Yielding transaction");
+                                            yield Ok(SequencerMessage {
+                                                sequence_number: msg.sequence_number,
+                                                tx,
+                                            });
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to parse message with sequence number {}: {:?}",
+                                            msg.sequence_number,
+                                            e
+                                        );
+                                        yield Err(e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error receiving message: {}", e);
+                            yield Err(e.into());
+
+                            tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
+                            match tokio_tungstenite::connect_async(self.url.clone()).await {
+                                Ok((ws_stream, _)) => {
+                                    tracing::debug!("Successfully reconnected to WebSocket");
+                                    self.ws_stream = ws_stream;
+                                }
+                                Err(reconnect_err) => {
+                                    tracing::error!("Failed to reconnect: {}", reconnect_err);
+                                    yield Err(reconnect_err.into());
+                                    break;
                                 }
                             }
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("Error receiving message: {}", e);
-                        yield Err(e.into());
+                }
+            } else {
+                // Multiple connections mode
+                use futures_util::stream::select_all;
 
-                        tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
-                        match tokio_tungstenite::connect_async(self.url.clone()).await {
-                            Ok((ws_stream, _)) => {
-                                tracing::debug!("Successfully reconnected to WebSocket");
-                                self.ws_stream = ws_stream;
+                // Create additional connections
+                let mut streams = Vec::new();
+                streams.push(self.ws_stream);
+
+                for i in 1..self.connections {
+                    match tokio_tungstenite::connect_async(self.url.clone()).await {
+                        Ok((ws_stream, _)) => {
+                            tracing::debug!("Created additional connection {}", i);
+                            streams.push(ws_stream);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create connection {}: {}", i, e);
+                            yield Err(e.into());
+                            return;
+                        }
+                    }
+                }
+
+                let mut combined_stream = select_all(streams);
+
+                while let Some(message) = combined_stream.next().await {
+                    match message {
+                        Ok(raw_msg) => {
+                            if raw_msg.is_empty() {
+                                tracing::debug!("Received empty message, skipping");
+                                continue;
                             }
-                            Err(reconnect_err) => {
-                                tracing::error!("Failed to reconnect: {}", reconnect_err);
-                                yield Err(reconnect_err.into());
-                                break;
+
+                            let as_txt = match raw_msg.into_text() {
+                                Ok(txt) => {
+                                    tracing::debug!("Parsed websocket message text of length: {}", txt.len());
+                                    txt
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to parse websocket message text: {}", e);
+                                    yield Err(e.into());
+                                    continue;
+                                }
+                            };
+
+                            let structured_data: Root = match serde_json::from_slice::<Root>(as_txt.as_bytes()) {
+                                Ok(ret) => {
+                                    tracing::debug!("Parsed JSON with {} messages", ret.messages.len());
+                                    ret
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to parse JSON: {}", e);
+                                    tracing::error!("message: {}", as_txt);
+                                    continue;
+                                }
+                            };
+
+                            for msg in structured_data.messages {
+                                tracing::debug!("Processing message with sequence number: {}", msg.sequence_number);
+
+                                if msg.message_with_meta_data.l1_incoming_message.l2msg.len() > 256 * 1024 {
+                                    tracing::debug!("Message too large, skipping");
+                                    continue;
+                                }
+
+                                if dedup_map.contains(&msg.sequence_number) {
+                                    tracing::debug!("Duplicate message sequence {}, skipping", msg.sequence_number);
+                                    continue;
+                                }
+
+                                dedup_map.insert(msg.sequence_number);
+                                tracing::debug!("Message type: {}", msg.message_with_meta_data.l1_incoming_message.header.kind);
+
+                                match parse_message(
+                                    msg.message_with_meta_data.l1_incoming_message.clone(),
+                                    self.chain_id,
+                                ) {
+                                    Ok(txs) => {
+                                        tracing::debug!("Successfully parsed {} transactions", txs.len());
+                                        for tx in txs {
+                                            tracing::debug!("Yielding transaction");
+                                            yield Ok(SequencerMessage {
+                                                sequence_number: msg.sequence_number,
+                                                tx,
+                                            });
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to parse message with sequence number {}: {:?}",
+                                            msg.sequence_number,
+                                            e
+                                        );
+                                        yield Err(e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error receiving message: {}", e);
+                            yield Err(e.into());
+
+                            tracing::error!("WebSocket Connection interrupted, attempting reconnect.");
+                            match tokio_tungstenite::connect_async(self.url.clone()).await {
+                                Ok((ws_stream, _)) => {
+                                    tracing::debug!("Successfully reconnected to WebSocket");
+                                    combined_stream.push(ws_stream);
+                                }
+                                Err(reconnect_err) => {
+                                    tracing::error!("Failed to reconnect: {}", reconnect_err);
+                                    yield Err(reconnect_err.into());
+                                    break;
+                                }
                             }
                         }
                     }
@@ -522,6 +648,7 @@ fn parse_raw_tx(bytes: &[u8]) -> Result<Recovered<ArbTxEnvelope>> {
         }
         TxType::Eip7702 => {
             let tx = alloy::consensus::transaction::TxEip7702::rlp_decode_signed(&mut &bytes[1..])?;
+            tx.recover_signer()
             let signer = tx.recover_signer()?;
             Recovered::new_unchecked(ArbTxEnvelope::Eip7702(tx), signer)
         }
