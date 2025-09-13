@@ -1,5 +1,5 @@
 use alloy_consensus::{Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
-use alloy_primitives::TxHash;
+use alloy_primitives::{Address, TxHash};
 pub use submit_retryable::TxSubmitRetryable;
 mod deposit;
 pub use deposit::TxDeposit;
@@ -20,7 +20,7 @@ pub enum ArbTxEnvelope {
     #[envelope(ty = 0x64)]
     DepositTx(TxDeposit),
     #[envelope(ty = 0x69)]
-    SubmitRetryableTx(submit_retryable::TxSubmitRetryable),
+    SubmitRetryableTx(TxSubmitRetryable),
 }
 
 impl ArbTxEnvelope {
@@ -33,6 +33,17 @@ impl ArbTxEnvelope {
             ArbTxEnvelope::Eip7702(tx) => *tx.hash(),
             ArbTxEnvelope::SubmitRetryableTx(tx) => tx.tx_hash(),
             ArbTxEnvelope::DepositTx(tx) => tx.tx_hash(),
+        }
+    }
+    /// Recover the sender address.
+    pub fn sender(&self) -> Result<Address, alloy_primitives::SignatureError> {
+        match self {
+            ArbTxEnvelope::Legacy(tx) => tx.recover_signer(),
+            ArbTxEnvelope::Eip2930(tx) => tx.recover_signer(),
+            ArbTxEnvelope::Eip1559(tx) => tx.recover_signer(),
+            ArbTxEnvelope::Eip7702(tx) => tx.recover_signer(),
+            ArbTxEnvelope::SubmitRetryableTx(tx) => Ok(tx.from()),
+            ArbTxEnvelope::DepositTx(tx) => Ok(tx.from()),
         }
     }
 }

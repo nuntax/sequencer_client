@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use alloy::eips::Decodable2718;
 use alloy::eips::Encodable2718;
 use alloy::eips::eip2930::AccessList;
@@ -28,13 +30,21 @@ pub struct TxDeposit {
     pub from: Address,
     pub to: Address,
     pub value: U256,
+    #[serde(skip)]
+    pub hash: OnceLock<TxHash>,
 }
 
 impl TxDeposit {
+    pub fn from(&self) -> Address {
+        self.from
+    }
+
     pub fn tx_hash(&self) -> TxHash {
-        let buffer = &mut Vec::with_capacity(self.rlp_encoded_fields_length());
-        self.encode_2718(buffer);
-        keccak256(buffer)
+        *self.hash.get_or_init(|| {
+            let buffer = &mut Vec::with_capacity(self.rlp_encoded_fields_length());
+            self.encode_2718(buffer);
+            keccak256(buffer)
+        })
     }
     pub fn decode_fields_sequencer(
         buf: &mut &[u8],
@@ -50,6 +60,7 @@ impl TxDeposit {
             from,
             to,
             value,
+            hash: OnceLock::new(),
         })
     }
     pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
@@ -97,6 +108,7 @@ impl TxDeposit {
             from,
             to,
             value,
+            hash: OnceLock::new(),
         })
     }
 }

@@ -27,7 +27,7 @@ async fn main() {
     loop {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => match msg_result {
-                Ok(msg) => match msg.tx.inner() {
+                Ok(msg) => match msg.tx {
                     sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
                         tracing::info!("Received legacy transaction with hash {}", signed.hash());
                     }

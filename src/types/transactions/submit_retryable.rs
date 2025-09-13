@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use crate::types::transactions::util::{decode, decode_rest};
 use alloy::eips::{
     Decodable2718, Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization,
@@ -38,13 +40,21 @@ pub struct TxSubmitRetryable {
     fee_refund_address: Address,
     retry_data_size: U256,
     retry_data: Bytes,
+    #[serde(skip)]
+    tx_hash: OnceLock<TxHash>,
 }
 
 impl TxSubmitRetryable {
+    pub fn from(&self) -> Address {
+        self.from
+    }
+
     pub fn tx_hash(&self) -> TxHash {
-        let buffer = &mut Vec::with_capacity(self.rlp_encoded_fields_length());
-        self.encode_2718(buffer);
-        keccak256(buffer)
+        *self.tx_hash.get_or_init(|| {
+            let mut encoded = Vec::new();
+            self.rlp_encode(&mut encoded);
+            keccak256(&encoded).into()
+        })
     }
 
     // ...existing code...
@@ -77,6 +87,7 @@ impl TxSubmitRetryable {
             fee_refund_address,
             retry_data_size: U256::from(retry_data.len()),
             retry_data,
+            tx_hash: OnceLock::new(),
         })
     }
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
@@ -162,6 +173,7 @@ impl TxSubmitRetryable {
             request_id,   // request_id is not part of the retryable transaction encoding
             from: sender, // from is not part of the retryable transaction encoding
             l1_base_fee,  // l1_base_fee is not part of the retryable transaction encoding
+            tx_hash: OnceLock::new(),
         })
     }
     pub fn rlp_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {

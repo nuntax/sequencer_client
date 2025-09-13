@@ -1,6 +1,10 @@
 use alloy::consensus::transaction::Recovered;
 use alloy::consensus::transaction::RlpEcdsaDecodableTx;
+use alloy::consensus::transaction::TxLegacy;
 use alloy::hex::FromHex;
+use alloy_consensus::TxEip1559;
+use alloy_consensus::TxEip2930;
+use alloy_consensus::TxEip7702;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::ChainId;
@@ -116,7 +120,7 @@ pub struct SequencerMessage {
     /// The sequence number of the message.
     pub sequence_number: u64,
     /// The transaction
-    pub tx: Recovered<ArbTxEnvelope>,
+    pub tx: ArbTxEnvelope,
 }
 
 /// SequencerReader is the main struct of this library.
@@ -381,10 +385,7 @@ impl SequencerReader {
     }
 }
 
-pub fn parse_message(
-    msg: L1IncomingMessage,
-    chain_id: ChainId,
-) -> Result<Vec<Recovered<ArbTxEnvelope>>> {
+pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<ArbTxEnvelope>> {
     let msg_type = MessageType::from_u8(msg.header.kind);
     tracing::debug!("Parsing message type: {:?}", msg_type);
 
@@ -433,9 +434,7 @@ pub fn parse_message(
             )?;
             tracing::debug!("Parsed TxDeposit: {:?}", tx);
             tracing::debug!("TxDeposit hash: {}", tx.tx_hash());
-            let recovered =
-                Recovered::new_unchecked(ArbTxEnvelope::DepositTx(tx), msg.header.sender.parse()?);
-            Ok(vec![recovered])
+            Ok(vec![ArbTxEnvelope::DepositTx(tx)])
         }
         MessageType::SubmitRetryable => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
@@ -461,10 +460,7 @@ pub fn parse_message(
                         .ok_or(eyre!("failed to deserialize base fee l1"))?,
                 ),
             )?;
-            Ok(vec![Recovered::new_unchecked(
-                ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone()),
-                tx.signer(),
-            )])
+            Ok(vec![ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone())])
         }
         _ => {
             tracing::warn!("not yet supported message type: {:?}", msg_type);
@@ -538,14 +534,14 @@ impl TryFrom<u8> for L2MessageKind {
     }
 }
 
-fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<Recovered<ArbTxEnvelope>>> {
+fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<ArbTxEnvelope>> {
     if depth >= MAX_BATCH_DEPTH {
         return Err(eyre::eyre!("Maximum batch depth exceeded: {}", depth));
     }
 
     // get kind byte and cast to enum
     let kind = L2MessageKind::try_from(bytes[0])?;
-    let mut transactions: Vec<Recovered<ArbTxEnvelope>> = Vec::new();
+    let mut transactions: Vec<ArbTxEnvelope> = Vec::new();
 
     match kind {
         L2MessageKind::SignedTx => {
@@ -625,33 +621,15 @@ impl TxType {
     }
 }
 
-fn parse_raw_tx(bytes: &[u8]) -> Result<Recovered<ArbTxEnvelope>> {
+fn parse_raw_tx(bytes: &[u8]) -> Result<ArbTxEnvelope> {
     let tx_type = bytes.first().ok_or(eyre!("Missing transaction type"))?;
     let tx_type = TxType::from_u8(*tx_type)?;
-    let tx: Recovered<ArbTxEnvelope> = match tx_type {
-        TxType::Legacy => {
-            let tx = alloy::consensus::transaction::TxLegacy::rlp_decode_signed(&mut &bytes[0..])?;
-            let signer = tx.recover_signer()?;
-            Recovered::new_unchecked(ArbTxEnvelope::Legacy(tx), signer)
-        }
-        TxType::Eip2930 => {
-            let tx = alloy::consensus::transaction::TxEip2930::rlp_decode_signed(&mut &bytes[1..])?;
-            let signer = tx.recover_signer()?;
-            Recovered::new_unchecked(ArbTxEnvelope::Eip2930(tx), signer)
-        }
-        TxType::Eip1559 => {
-            //log hex string of the transaction
-            // decode the EIP-1559 transaction
-            let tx = alloy::consensus::transaction::TxEip1559::rlp_decode_signed(&mut &bytes[1..])?;
-            let signer = tx.recover_signer()?;
-            Recovered::new_unchecked(ArbTxEnvelope::Eip1559(tx), signer)
-        }
-        TxType::Eip7702 => {
-            let tx = alloy::consensus::transaction::TxEip7702::rlp_decode_signed(&mut &bytes[1..])?;
-            tx.recover_signer()
-            let signer = tx.recover_signer()?;
-            Recovered::new_unchecked(ArbTxEnvelope::Eip7702(tx), signer)
-        }
+    let tx: ArbTxEnvelope = match tx_type {
+        TxType::Legacy => ArbTxEnvelope::Legacy(TxLegacy::rlp_decode_signed(&mut &bytes[0..])?),
+        TxType::Eip2930 => ArbTxEnvelope::Eip2930(TxEip2930::rlp_decode_signed(&mut &bytes[1..])?),
+        TxType::Eip1559 => ArbTxEnvelope::Eip1559(TxEip1559::rlp_decode_signed(&mut &bytes[1..])?),
+        TxType::Eip7702 => ArbTxEnvelope::Eip7702(TxEip7702::rlp_decode_signed(&mut &bytes[1..])?),
     };
+
     Ok(tx)
 }
