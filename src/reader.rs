@@ -121,6 +121,8 @@ pub struct SequencerMessage {
     pub sequence_number: u64,
     /// The transaction
     pub tx: ArbTxEnvelope,
+    /// is last tx in block
+    pub is_last_in_block: bool,
 }
 
 /// SequencerReader is the main struct of this library.
@@ -225,11 +227,17 @@ impl SequencerReader {
                                 ) {
                                     Ok(txs) => {
                                         tracing::debug!("Successfully parsed {} transactions", txs.len());
-                                        for tx in txs {
+                                        for tx in &txs {
                                             tracing::debug!("Yielding transaction");
+                                            let is_last_in_block = if tx == txs.last().unwrap() {
+                                                true
+                                            } else {
+                                                false
+                                            };
                                             yield Ok(SequencerMessage {
                                                 sequence_number: msg.sequence_number,
-                                                tx,
+                                                tx: tx.clone(),
+                                                is_last_in_block,
                                             });
                                         }
                                     }
@@ -341,11 +349,17 @@ impl SequencerReader {
                                 ) {
                                     Ok(txs) => {
                                         tracing::debug!("Successfully parsed {} transactions", txs.len());
-                                        for tx in txs {
+                                        for tx in &txs {
                                             tracing::debug!("Yielding transaction");
+                                            let is_last_in_block = if tx == txs.last().unwrap() {
+                                                true
+                                            } else {
+                                                false
+                                            };
                                             yield Ok(SequencerMessage {
                                                 sequence_number: msg.sequence_number,
-                                                tx,
+                                                tx: tx.clone(),
+                                                is_last_in_block,
                                             });
                                         }
                                     }
