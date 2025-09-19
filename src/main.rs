@@ -29,16 +29,28 @@ async fn main() {
             Ok(Some(msg_result)) => match msg_result {
                 Ok(msg) => match msg.tx {
                     sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
-                        tracing::info!("Received legacy transaction with hash {}", signed.hash());
+                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                        if msg.is_last_in_block {
+                            tracing::info!("----------------------------------------------------");
+                        }
                     }
                     sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
-                        tracing::info!("Received EIP-2930 transaction with hash {}", signed.hash());
+                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                        if msg.is_last_in_block {
+                            tracing::info!("----------------------------------------------------");
+                        }
                     }
                     sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
-                        tracing::info!("Received EIP-1559 transaction with hash {}", signed.hash());
+                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                        if msg.is_last_in_block {
+                            tracing::info!("----------------------------------------------------");
+                        }
                     }
                     sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
-                        tracing::info!("Received EIP-7702 transaction with hash {}", signed.hash());
+                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                        if msg.is_last_in_block {
+                            tracing::info!("----------------------------------------------------");
+                        }
                     }
                     sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
                         tx_submit_retryable,

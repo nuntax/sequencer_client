@@ -9,7 +9,7 @@ path = "src/main2.rs"
 
 [package]
 name = "sequencer_client"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 license-file = "LICENSE"
 description = "A library for reading the Arbitrum Sequencer feed."
