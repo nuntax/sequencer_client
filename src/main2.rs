@@ -1,5 +1,6 @@
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
+use sequencer_client::types::consensus::transactions::ArbTxEnvelope;
 use sequencer_client::types::messages::Message;
 #[tokio::main()]
 async fn main() {
@@ -33,27 +34,37 @@ async fn main() {
                     for message in &msg.messages {
                         match message {
                             Message::Transaction(tx) => match tx {
-                                sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
-                                    tracing::info!("Received legacy transaction with hash {}", signed.hash());
+                                ArbTxEnvelope::Legacy(signed) => {
+                                    tracing::info!(
+                                        "Received legacy transaction with hash {}",
+                                        signed.hash()
+                                    );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
-                                    tracing::info!("Received EIP-2930 transaction with hash {}", signed.hash());
+                                ArbTxEnvelope::Eip2930(signed) => {
+                                    tracing::info!(
+                                        "Received EIP-2930 transaction with hash {}",
+                                        signed.hash()
+                                    );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
-                                    tracing::info!("Received EIP-1559 transaction with hash {}", signed.hash());
+                                ArbTxEnvelope::Eip1559(signed) => {
+                                    tracing::info!(
+                                        "Received EIP-1559 transaction with hash {}",
+                                        signed.hash()
+                                    );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
-                                    tracing::info!("Received EIP-7702 transaction with hash {}", signed.hash());
+                                ArbTxEnvelope::Eip7702(signed) => {
+                                    tracing::info!(
+                                        "Received EIP-7702 transaction with hash {}",
+                                        signed.hash()
+                                    );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
-                                    tx_submit_retryable,
-                                ) => {
+                                ArbTxEnvelope::SubmitRetryableTx(tx_submit_retryable) => {
                                     tracing::info!(
                                         "Received ArbRetryable transaction with hash {}",
                                         tx_submit_retryable.tx_hash()
                                     );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                                ArbTxEnvelope::DepositTx(tx_deposit) => {
                                     tracing::info!(
                                         "Received deposit transaction with hash {}",
                                         tx_deposit.tx_hash()
@@ -65,7 +76,7 @@ async fn main() {
                             }
                         }
                     }
-                },
+                }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);
                 }

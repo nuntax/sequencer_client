@@ -1,4 +1,4 @@
-use crate::types::transactions::ArbTxEnvelope;
+use crate::types::consensus::transactions::ArbTxEnvelope;
 
 pub mod batchpostingreport;
 

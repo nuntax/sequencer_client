@@ -21,7 +21,7 @@ use bytes::BufMut;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::types::transactions::ArbTxType;
+use crate::types::consensus::transactions::ArbTxType;
 
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct TxDeposit {

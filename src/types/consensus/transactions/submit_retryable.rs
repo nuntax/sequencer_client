@@ -1,6 +1,5 @@
 use std::sync::OnceLock;
 
-use crate::types::transactions::util::{decode, decode_rest};
 use alloy::eips::{
     Decodable2718, Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization,
 };
@@ -11,6 +10,8 @@ use alloy_primitives::{
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 use bytes::Buf;
 use serde::{Deserialize, Serialize};
+
+use crate::types::consensus::transactions::util::{decode, decode_rest};
 ///Main module for the sequencer reader crate.
 ///
 ///
@@ -18,11 +19,6 @@ use serde::{Deserialize, Serialize};
 ///
 ///
 /// https://github.com/OffchainLabs/nitro/blob/23cae22e1f76cf3675f965d78e268fd2870d8708/arbos/parse_l2.go#L292
-/// Options here are not actually used in the raw representation of the retryable transaction, but are used in the nitro client to provide additional context for the transaction.
-/// the method "finalize_after_decode" will set these fields after decoding the transaction.
-/// What we do through out this struct is to not use rlp encoding/decoding, since arbitrum nitro also doeesnt use rlp encoding/decoding but rather the solidity abi encoding/decoding.
-/// We also explicitly dont use the type id, its only really for explorers and other tools to identify the transaction type.
-/// All these modifications are so encoded(decoded(x)) == x, where x is the original retryable transaction bytes received from the sequencer.
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct TxSubmitRetryable {
     chain_id: U256,
@@ -136,7 +132,7 @@ impl TxSubmitRetryable {
         len += 1;
         len
     }
-
+    /// Decodes a retryable transaction in the format used by the sequencer.
     pub fn decode_fields_sequencer(
         buf: &mut &[u8],
         chain_id: U256,

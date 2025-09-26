@@ -1,5 +1,6 @@
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
+use sequencer_client::types::consensus::transactions::ArbTxEnvelope;
 use sequencer_client::types::messages::Message;
 #[tokio::main()]
 async fn main() {
@@ -33,27 +34,25 @@ async fn main() {
                     for message in &msg.messages {
                         match message {
                             Message::Transaction(tx) => match tx {
-                                sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
+                                ArbTxEnvelope::Legacy(signed) => {
                                     tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
+                                ArbTxEnvelope::Eip2930(signed) => {
                                     tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
+                                ArbTxEnvelope::Eip1559(signed) => {
                                     tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
+                                ArbTxEnvelope::Eip7702(signed) => {
                                     tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
-                                    tx_submit_retryable,
-                                ) => {
+                                ArbTxEnvelope::SubmitRetryableTx(tx_submit_retryable) => {
                                     tracing::info!(
                                         "Received ArbRetryable transaction with hash {}",
                                         tx_submit_retryable.tx_hash()
                                     );
                                 }
-                                sequencer_client::types::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                                ArbTxEnvelope::DepositTx(tx_deposit) => {
                                     tracing::info!(
                                         "Received deposit transaction with hash {}",
                                         tx_deposit.tx_hash()
@@ -65,9 +64,7 @@ async fn main() {
                             }
                         }
                     }
-                    if msg.is_last_in_block {
-                        tracing::info!("----------------------------------------------------");
-                    }
+                    tracing::info!("End of message batch");
                 }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);

@@ -1,11 +1,15 @@
+use std::fmt::Display;
+
 use alloy_consensus::{Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
 use alloy_primitives::{Address, TxHash};
-pub use submit_retryable::TxSubmitRetryable;
-mod deposit;
 pub use deposit::TxDeposit;
-mod submit_retryable;
+
+use crate::types::consensus::transactions::submit_retryable::TxSubmitRetryable;
+pub mod deposit;
+pub mod submit_retryable;
+pub mod typed;
 pub mod unsigned;
-mod util;
+pub mod util;
 #[derive(Debug, Clone, TransactionEnvelope)]
 #[envelope(tx_type_name = ArbTxType)]
 pub enum ArbTxEnvelope {
@@ -44,6 +48,18 @@ impl ArbTxEnvelope {
             ArbTxEnvelope::Eip7702(tx) => tx.recover_signer(),
             ArbTxEnvelope::SubmitRetryableTx(tx) => Ok(tx.from()),
             ArbTxEnvelope::DepositTx(tx) => Ok(tx.from()),
+        }
+    }
+}
+impl Display for ArbTxType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArbTxType::Legacy => write!(f, "Legacy"),
+            ArbTxType::Eip2930 => write!(f, "EIP-2930"),
+            ArbTxType::Eip1559 => write!(f, "EIP-1559"),
+            ArbTxType::Eip7702 => write!(f, "EIP-7702"),
+            ArbTxType::DepositTx => write!(f, "DepositTx"),
+            ArbTxType::SubmitRetryableTx => write!(f, "SubmitRetryableTx"),
         }
     }
 }

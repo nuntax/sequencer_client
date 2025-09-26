@@ -1,2 +1,3 @@
+pub mod consensus;
 pub mod messages;
-pub mod transactions;
+pub mod network;
