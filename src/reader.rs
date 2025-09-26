@@ -25,6 +25,8 @@ use std::str::FromStr;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use crate::types::messages::Message;
+use crate::types::messages::batchpostingreport::BatchPostingReport;
 use crate::types::transactions::ArbTxEnvelope;
 use crate::types::transactions::TxDeposit;
 use crate::types::transactions::TxSubmitRetryable;
@@ -119,9 +121,9 @@ impl MessageType {
 pub struct SequencerMessage {
     /// The sequence number of the message.
     pub sequence_number: u64,
-    /// The transaction
-    pub tx: ArbTxEnvelope,
-    /// is last tx in block
+    /// The messages
+    pub messages: Vec<Message>,
+    /// is last message in block
     pub is_last_in_block: bool,
 }
 
@@ -225,19 +227,13 @@ impl SequencerReader {
                                     msg.message_with_meta_data.l1_incoming_message.clone(),
                                     self.chain_id,
                                 ) {
-                                    Ok(txs) => {
-                                        tracing::debug!("Successfully parsed {} transactions", txs.len());
-                                        for tx in &txs {
-                                            tracing::debug!("Yielding transaction");
-                                            let is_last_in_block = if tx == txs.last().unwrap() {
-                                                true
-                                            } else {
-                                                false
-                                            };
+                                    Ok(messages) => {
+                                        tracing::debug!("Successfully parsed {} messages", messages.len());
+                                        if !messages.is_empty() {
                                             yield Ok(SequencerMessage {
                                                 sequence_number: msg.sequence_number,
-                                                tx: tx.clone(),
-                                                is_last_in_block,
+                                                messages,
+                                                is_last_in_block: true, // Each parsed message group is considered a block
                                             });
                                         }
                                     }
@@ -347,19 +343,13 @@ impl SequencerReader {
                                     msg.message_with_meta_data.l1_incoming_message.clone(),
                                     self.chain_id,
                                 ) {
-                                    Ok(txs) => {
-                                        tracing::debug!("Successfully parsed {} transactions", txs.len());
-                                        for tx in &txs {
-                                            tracing::debug!("Yielding transaction");
-                                            let is_last_in_block = if tx == txs.last().unwrap() {
-                                                true
-                                            } else {
-                                                false
-                                            };
+                                    Ok(messages) => {
+                                        tracing::debug!("Successfully parsed {} messages", messages.len());
+                                        if !messages.is_empty() {
                                             yield Ok(SequencerMessage {
                                                 sequence_number: msg.sequence_number,
-                                                tx: tx.clone(),
-                                                is_last_in_block,
+                                                messages,
+                                                is_last_in_block: true, // Each parsed message group is considered a block
                                             });
                                         }
                                     }
@@ -399,7 +389,7 @@ impl SequencerReader {
     }
 }
 
-pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<ArbTxEnvelope>> {
+pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Message>> {
     let msg_type = MessageType::from_u8(msg.header.kind);
     tracing::debug!("Parsing message type: {:?}", msg_type);
 
@@ -420,7 +410,8 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Ar
             match parse_l2_msg(buffer.as_mut_slice(), 0) {
                 Ok(txs) => {
                     tracing::debug!("Successfully parsed {} L2 transactions", txs.len());
-                    Ok(txs)
+                    let messages = txs.into_iter().map(Message::Transaction).collect();
+                    Ok(messages)
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse L2 message: {}", e);
@@ -448,7 +439,7 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Ar
             )?;
             tracing::debug!("Parsed TxDeposit: {:?}", tx);
             tracing::debug!("TxDeposit hash: {}", tx.tx_hash());
-            Ok(vec![ArbTxEnvelope::DepositTx(tx)])
+            Ok(vec![Message::Transaction(ArbTxEnvelope::DepositTx(tx))])
         }
         MessageType::SubmitRetryable => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
@@ -474,7 +465,16 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Ar
                         .ok_or(eyre!("failed to deserialize base fee l1"))?,
                 ),
             )?;
-            Ok(vec![ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone())])
+            Ok(vec![Message::Transaction(
+                ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone()),
+            )])
+        }
+        MessageType::BatchPostingReport => {
+            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
+            let buffer = buffer_vec.as_mut_slice();
+            let report = BatchPostingReport::decode_fields_sequencer(&mut &*buffer)?;
+            tracing::debug!("Parsed BatchPostingReport: {:?}", report);
+            Ok(vec![Message::BatchPostingReport(report)])
         }
         _ => {
             tracing::warn!("not yet supported message type: {:?}", msg_type);

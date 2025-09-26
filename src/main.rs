@@ -1,5 +1,6 @@
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
+use sequencer_client::types::messages::Message;
 #[tokio::main()]
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed";
@@ -27,46 +28,47 @@ async fn main() {
     loop {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => match msg_result {
-                Ok(msg) => match msg.tx {
-                    sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
-                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                        if msg.is_last_in_block {
-                            tracing::info!("----------------------------------------------------");
+                Ok(msg) => {
+                    tracing::info!("Received {} messages", msg.messages.len());
+                    for message in &msg.messages {
+                        match message {
+                            Message::Transaction(tx) => match tx {
+                                sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
+                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                                }
+                                sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
+                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                                }
+                                sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
+                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                                }
+                                sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
+                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
+                                }
+                                sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
+                                    tx_submit_retryable,
+                                ) => {
+                                    tracing::info!(
+                                        "Received ArbRetryable transaction with hash {}",
+                                        tx_submit_retryable.tx_hash()
+                                    );
+                                }
+                                sequencer_client::types::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                                    tracing::info!(
+                                        "Received deposit transaction with hash {}",
+                                        tx_deposit.tx_hash()
+                                    );
+                                }
+                            },
+                            Message::BatchPostingReport(_report) => {
+                                tracing::info!("Received BatchPostingReport");
+                            }
                         }
                     }
-                    sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
-                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                        if msg.is_last_in_block {
-                            tracing::info!("----------------------------------------------------");
-                        }
+                    if msg.is_last_in_block {
+                        tracing::info!("----------------------------------------------------");
                     }
-                    sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
-                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                        if msg.is_last_in_block {
-                            tracing::info!("----------------------------------------------------");
-                        }
-                    }
-                    sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
-                        tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                        if msg.is_last_in_block {
-                            tracing::info!("----------------------------------------------------");
-                        }
-                    }
-                    sequencer_client::types::transactions::ArbTxEnvelope::SubmitRetryableTx(
-                        tx_submit_retryable,
-                    ) => {
-                        tracing::info!(
-                            "Received ArbRetryable transaction with hash {}",
-                            tx_submit_retryable.tx_hash()
-                        );
-                    }
-                    sequencer_client::types::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
-                        tracing::info!(
-                            "Received deposit transaction with hash {}",
-                            tx_deposit.tx_hash()
-                        );
-                    }
-                },
+                }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);
                 }
