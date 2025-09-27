@@ -357,6 +357,7 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Me
         MessageType::BatchPostingReport => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
             let buffer = buffer_vec.as_mut_slice();
+            tracing::info!("Buffer: {}", hex::encode(&buffer));
             let report = BatchPostingReport::decode_fields_sequencer(&mut &*buffer)?;
             tracing::debug!("Parsed BatchPostingReport: {:?}", report);
             Ok(vec![Message::BatchPostingReport(report)])

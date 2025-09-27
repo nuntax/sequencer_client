@@ -2,6 +2,8 @@ use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_rlp::Decodable;
 use eyre::Result;
 
+use crate::types::consensus::transactions::util::decode;
+
 #[derive(Debug)]
 pub struct BatchPostingReport {
     batch_timestamp: U256,
@@ -14,15 +16,15 @@ pub struct BatchPostingReport {
 
 impl BatchPostingReport {
     pub fn decode_fields_sequencer(buf: &mut &[u8]) -> Result<Self> {
-        let time_stamp = Decodable::decode(buf)?;
-        let batch_poster = Decodable::decode(buf)?;
-        let data_hash = Decodable::decode(buf)?;
-        let batch_num = Decodable::decode(buf)?;
-        let l1_base_fee = Decodable::decode(buf)?;
+        let time_stamp = decode(buf)?;
+        let batch_poster = decode(buf)?;
+        let data_hash = decode(buf)?;
+        let batch_num = decode(buf)?;
+        let l1_base_fee = decode(buf)?;
         let extra_gas = if buf.is_empty() {
             None
         } else {
-            Some(Decodable::decode(buf)?)
+            Some(decode(buf)?)
         };
         Ok(Self {
             batch_timestamp: time_stamp,
