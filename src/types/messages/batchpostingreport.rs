@@ -6,12 +6,12 @@ use crate::types::consensus::transactions::util::decode;
 
 #[derive(Debug)]
 pub struct BatchPostingReport {
-    batch_timestamp: U256,
-    batch_poster_address: Address,
-    data_hash: FixedBytes<32>,
-    batch_num: u64,
-    l1_base_fee: U256,
-    extra_gas: Option<u64>,
+    pub batch_timestamp: U256,
+    pub batch_poster_address: Address,
+    pub data_hash: FixedBytes<32>,
+    pub batch_num: u64,
+    pub l1_base_fee: U256,
+    pub extra_gas: Option<u64>,
 }
 
 impl BatchPostingReport {
