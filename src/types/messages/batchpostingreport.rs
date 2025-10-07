@@ -1,5 +1,4 @@
 use alloy_primitives::{Address, FixedBytes, U256};
-use alloy_rlp::Decodable;
 use eyre::Result;
 
 use crate::types::consensus::transactions::util::decode;
