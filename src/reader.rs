@@ -16,7 +16,6 @@ use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
 use futures_util::lock::Mutex;
-use futures_util::stream;
 use futures_util::stream::Stream;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -231,7 +230,6 @@ impl SequencerReader {
                     let mut buf = self.buffer.lock().await;
                     if buf.is_empty() {
                         drop(buf); // release lock before sleeping
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         continue;
                     }
                     let first_key = *buf.keys().next().unwrap();
