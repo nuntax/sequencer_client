@@ -30,52 +30,7 @@ async fn main() {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => match msg_result {
                 Ok(msg) => {
-                    tracing::info!("Received {} messages", msg.messages.len());
-                    for message in &msg.messages {
-                        match message {
-                            Message::Transaction(tx) => match tx {
-                                ArbTxEnvelope::Legacy(signed) => {
-                                    tracing::info!(
-                                        "Received legacy transaction with hash {}",
-                                        signed.hash()
-                                    );
-                                }
-                                ArbTxEnvelope::Eip2930(signed) => {
-                                    tracing::info!(
-                                        "Received EIP-2930 transaction with hash {}",
-                                        signed.hash()
-                                    );
-                                }
-                                ArbTxEnvelope::Eip1559(signed) => {
-                                    tracing::info!(
-                                        "Received EIP-1559 transaction with hash {}",
-                                        signed.hash()
-                                    );
-                                }
-                                ArbTxEnvelope::Eip7702(signed) => {
-                                    tracing::info!(
-                                        "Received EIP-7702 transaction with hash {}",
-                                        signed.hash()
-                                    );
-                                }
-                                ArbTxEnvelope::SubmitRetryableTx(tx_submit_retryable) => {
-                                    tracing::info!(
-                                        "Received ArbRetryable transaction with hash {}",
-                                        tx_submit_retryable.tx_hash()
-                                    );
-                                }
-                                ArbTxEnvelope::DepositTx(tx_deposit) => {
-                                    tracing::info!(
-                                        "Received deposit transaction with hash {}",
-                                        tx_deposit.tx_hash()
-                                    );
-                                }
-                            },
-                            Message::BatchPostingReport(_report) => {
-                                tracing::info!("Received BatchPostingReport");
-                            }
-                        }
-                    }
+                    tracing::info!("Received message: {:?}", msg.sequence_number);
                 }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);

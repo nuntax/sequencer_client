@@ -30,41 +30,7 @@ async fn main() {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => match msg_result {
                 Ok(msg) => {
-                    tracing::info!("Received {} messages", msg.messages.len());
-                    for message in &msg.messages {
-                        match message {
-                            Message::Transaction(tx) => match tx {
-                                ArbTxEnvelope::Legacy(signed) => {
-                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                                }
-                                ArbTxEnvelope::Eip2930(signed) => {
-                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                                }
-                                ArbTxEnvelope::Eip1559(signed) => {
-                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                                }
-                                ArbTxEnvelope::Eip7702(signed) => {
-                                    tracing::info!("{}, {}", signed.hash(), msg.is_last_in_block);
-                                }
-                                ArbTxEnvelope::SubmitRetryableTx(tx_submit_retryable) => {
-                                    tracing::info!(
-                                        "Received ArbRetryable transaction with hash {}",
-                                        tx_submit_retryable.tx_hash()
-                                    );
-                                }
-                                ArbTxEnvelope::DepositTx(tx_deposit) => {
-                                    tracing::info!(
-                                        "Received deposit transaction with hash {}",
-                                        tx_deposit.tx_hash()
-                                    );
-                                }
-                            },
-                            Message::BatchPostingReport(_report) => {
-                                tracing::info!("Received BatchPostingReport");
-                            }
-                        }
-                    }
-                    tracing::info!("End of message batch");
+                    tracing::info!("Received message: {:?}", msg.sequence_number);
                 }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);
