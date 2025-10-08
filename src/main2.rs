@@ -6,7 +6,7 @@ use sequencer_client::types::messages::Message;
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed";
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::INFO) // Changed to DEBUG to see more logs
+        .with_max_level(tracing::Level::TRACE) // Changed to DEBUG to see more logs
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set global default subscriber");

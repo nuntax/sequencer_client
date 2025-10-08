@@ -15,7 +15,6 @@ use base64::prelude::*;
 use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
-use futures_util::lock::Mutex;
 use futures_util::stream::Stream;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -25,6 +24,8 @@ use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio_stream::StreamMap;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -131,6 +132,8 @@ pub struct SequencerMessage {
     pub is_last_in_block: bool,
     /// timestamp of the message
     pub timestamp: u64,
+    /// local instant when the message was received from websocket
+    pub received_at: Instant,
 }
 
 /// SequencerReader is the main struct of this library.
@@ -145,7 +148,7 @@ pub struct SequencerReader {
     /// The chain ID of the Arbitrum network.
     pub chain_id: ChainId,
     /// The buffer for out-of-order messages.
-    buffer: Arc<Mutex<BTreeMap<u64, BroadcastFeedMessage>>>,
+    buffer: Arc<Mutex<BTreeMap<u64, (BroadcastFeedMessage, Instant)>>>,
 }
 
 impl SequencerReader {
@@ -212,40 +215,45 @@ impl SequencerReader {
                             continue;
                         }
                     };
+                let message_receive = Instant::now();
+                tracing::debug!("Received {} messages", messages.len());
                 for msg in messages {
                     let seq_num = msg.sequence_number;
+                    tracing::debug!("{}", seq_num);
                     if dedup_map.contains(&seq_num) {
                         tracing::debug!("Duplicate message with sequence number: {}", seq_num);
                         continue;
                     }
                     dedup_map.insert(seq_num);
-                    let mut buf = buffer_for_reader.lock().await;
-                    buf.insert(seq_num, msg);
+                    let mut buf = buffer_for_reader.lock().unwrap();
+                    // store the message together with the receive timestamp
+                    buf.insert(seq_num, (msg, message_receive));
                 }
             }
             tracing::debug!("WebSocket stream ended");
         });
         Box::pin(stream! {
                 loop {
-                    let mut buf = self.buffer.lock().await;
-                    if buf.is_empty() {
-                        drop(buf); // release lock before sleeping
-                        continue;
-                    }
-                    let first_key = *buf.keys().next().unwrap();
-                    let msg = buf.remove(&first_key).unwrap();
-                    drop(buf); // release lock before processing
+                    let mut buf = self.buffer.lock().unwrap();
+                        if buf.is_empty() {
+                            drop(buf); // release lock before sleeping
+                            continue;
+                        }
+                        let first_key = *buf.keys().next().unwrap();
+                        let (msg, received_at) = buf.remove(&first_key).unwrap();
+                        drop(buf); // release lock before processing
 
-                    let l1_msg = msg.message_with_meta_data.l1_incoming_message.clone();
-                    match parse_message(l1_msg, self.chain_id) {
+                        let l1_msg = msg.message_with_meta_data.l1_incoming_message.clone();
+                        match parse_message(l1_msg, self.chain_id) {
                         Ok(messages) => {
-                            let is_last_in_block = msg.message_with_meta_data.delayed_messages_read == 0;
-                            yield Ok(SequencerMessage {
-                                sequence_number: msg.sequence_number,
-                                messages,
-                                is_last_in_block,
-                                timestamp: msg.message_with_meta_data.l1_incoming_message.header.timestamp,
-                            });
+                                let is_last_in_block = msg.message_with_meta_data.delayed_messages_read == 0;
+                                yield Ok(SequencerMessage {
+                                    sequence_number: msg.sequence_number,
+                                    messages,
+                                    is_last_in_block,
+                                    timestamp: msg.message_with_meta_data.l1_incoming_message.header.timestamp,
+                                    received_at,
+                                });
                         }
                         Err(e) => {
                             tracing::error!("Failed to parse message: {}", e);

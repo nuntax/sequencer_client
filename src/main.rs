@@ -19,7 +19,7 @@ async fn main() {
 
     tracing::info!("Connecting to sequencer at {}", url);
 
-    let reader = SequencerReader::new(url, 42161, 1).await;
+    let reader = SequencerReader::new(url, 42161, 10).await;
 
     let mut stream = reader.into_stream();
     tracing::info!("Created stream, starting to read messages...");
@@ -30,7 +30,11 @@ async fn main() {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => match msg_result {
                 Ok(msg) => {
-                    tracing::info!("Received message: {:?}", msg.sequence_number);
+                    tracing::info!(
+                        "Received message: {:?}, elapsed: {:?}",
+                        msg.sequence_number,
+                        msg.received_at.elapsed(),
+                    );
                 }
                 Err(e) => {
                     tracing::error!("Error in received message: {:?}", e);
