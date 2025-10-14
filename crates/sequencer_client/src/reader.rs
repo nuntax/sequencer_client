@@ -131,7 +131,8 @@ impl SequencerReader {
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Failed to parse JSON: {}, text: {}", e, msg_text);
+                        //debug trace here since this just indicates an empty message
+                        tracing::debug!("Failed to parse JSON: {}, text: {}", e, msg_text);
                         continue;
                     }
                 };
