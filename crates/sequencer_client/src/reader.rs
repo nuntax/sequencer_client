@@ -4,130 +4,45 @@ use alloy::consensus::transaction::TxLegacy;
 use alloy::hex::FromHex;
 use alloy_consensus::TxEip1559;
 use alloy_consensus::TxEip2930;
+
 use alloy_consensus::TxEip7702;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::ChainId;
 use alloy_primitives::FixedBytes;
 use alloy_primitives::U256;
+use arb_alloy_consensus::transactions::ArbTxEnvelope;
+use arb_alloy_consensus::transactions::TxDeposit;
+use arb_alloy_consensus::transactions::batchpostingreport::BatchPostingReport;
+use arb_alloy_consensus::transactions::internal::ArbitrumInternalTx;
+use arb_alloy_consensus::transactions::submit_retryable::SubmitRetryableTx;
+use arb_alloy_network::sequencer::feed::BroadcastFeedMessage;
+use arb_alloy_network::sequencer::feed::L1IncomingMessage;
+use arb_alloy_network::sequencer::feed::MessageType;
+use arb_alloy_network::sequencer::feed::Root;
 use async_stream::stream;
 use base64::prelude::*;
 use eyre::Result;
 use eyre::eyre;
 use futures_util::StreamExt;
 use futures_util::stream::Stream;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio_stream::StreamMap;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-
-use crate::types::consensus::transactions::ArbTxEnvelope;
-use crate::types::consensus::transactions::TxDeposit;
-use crate::types::consensus::transactions::submit_retryable::TxSubmitRetryable;
-use crate::types::messages::Message;
-use crate::types::messages::batchpostingreport::BatchPostingReport;
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Root {
-    version: u8,
-    messages: Option<Vec<BroadcastFeedMessage>>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BroadcastFeedMessage {
-    sequence_number: u64,
-    #[serde(rename = "message")]
-    message_with_meta_data: MessageWithMetadata,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MessageWithMetadata {
-    #[serde(rename = "message")]
-    l1_incoming_message: L1IncomingMessage,
-    delayed_messages_read: u64,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct L1IncomingMessage {
-    header: Header,
-    #[serde(rename = "l2Msg")]
-    l2msg: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Header {
-    kind: u8,
-    sender: String,
-    block_number: u64,
-    timestamp: u64,
-    request_id: Value,
-    base_fee_l1: Value,
-}
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageType {
-    L2Message = 3,
-    EndOfBlock = 6,
-    L2FundedByL1 = 7,
-    RollupEvent = 8,
-    SubmitRetryable = 9,
-    BatchForGasEstimation = 10,
-    Initialize = 11,
-    EthDeposit = 12,
-    BatchPostingReport = 13,
-    Invalid = 0xFF,
-}
-impl MessageType {
-    pub fn from_u8(value: u8) -> Self {
-        match value {
-            3 => MessageType::L2Message,
-            6 => MessageType::EndOfBlock,
-            7 => MessageType::L2FundedByL1,
-            8 => MessageType::RollupEvent,
-            9 => MessageType::SubmitRetryable,
-            10 => MessageType::BatchForGasEstimation,
-            11 => MessageType::Initialize,
-            12 => MessageType::EthDeposit,
-            13 => MessageType::BatchPostingReport,
-            _ => MessageType::Invalid,
-        }
-    }
-    #[allow(dead_code)]
-    pub fn to_u8(&self) -> u8 {
-        match self {
-            MessageType::L2Message => 3,
-            MessageType::EndOfBlock => 6,
-            MessageType::L2FundedByL1 => 7,
-            MessageType::RollupEvent => 8,
-            MessageType::SubmitRetryable => 9,
-            MessageType::BatchForGasEstimation => 10,
-            MessageType::Initialize => 11,
-            MessageType::EthDeposit => 12,
-            MessageType::BatchPostingReport => 13,
-            MessageType::Invalid => 0xFF,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct SequencerMessage {
     /// The sequence number of the message.
     pub sequence_number: u64,
     /// The messages
-    pub messages: Vec<Message>,
+    pub messages: Vec<ArbTxEnvelope>,
     /// is last message in block
     pub is_last_in_block: bool,
     /// timestamp of the message
@@ -136,9 +51,15 @@ pub struct SequencerMessage {
     pub received_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+pub struct BufferedMessage {
+    pub message: BroadcastFeedMessage,
+    pub received_at: Instant,
+    pub version: u8,
+}
+
 /// SequencerReader is the main struct of this library.
 /// It is used to connect to the Arbitrum sequencer feed and read messages from it.
-/// It then forwards the messages to a tokio mpsc, which can be used to receive the messages.
 #[derive(Debug)]
 pub struct SequencerReader {
     /// The WebSocket stream used to connect to the Arbitrum sequencer feed.
@@ -148,7 +69,7 @@ pub struct SequencerReader {
     /// The chain ID of the Arbitrum network.
     pub chain_id: ChainId,
     /// The buffer for out-of-order messages.
-    buffer: Arc<Mutex<BTreeMap<u64, (BroadcastFeedMessage, Instant)>>>,
+    buffer: Arc<Mutex<BTreeMap<u64, BufferedMessage>>>,
 }
 
 impl SequencerReader {
@@ -201,33 +122,36 @@ impl SequencerReader {
                     tracing::debug!("Received empty message");
                     continue;
                 }
-                let messages: Vec<BroadcastFeedMessage> =
-                    match serde_json::from_str::<Root>(&msg_text) {
-                        Ok(r) => {
-                            if let Some(msgs) = r.messages {
-                                msgs
-                            } else {
-                                continue;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to parse JSON: {}, text: {}", e, msg_text);
+                let (messages, version) = match serde_json::from_str::<Root>(&msg_text) {
+                    Ok(r) => {
+                        if let Some(msgs) = r.messages {
+                            (msgs, r.version)
+                        } else {
                             continue;
                         }
-                    };
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse JSON: {}, text: {}", e, msg_text);
+                        continue;
+                    }
+                };
                 let message_receive = Instant::now();
-                tracing::debug!("Received {} messages", messages.len());
                 for msg in messages {
                     let seq_num = msg.sequence_number;
-                    tracing::debug!("{}", seq_num);
                     if dedup_map.contains(&seq_num) {
-                        tracing::debug!("Duplicate message with sequence number: {}", seq_num);
                         continue;
                     }
                     dedup_map.insert(seq_num);
                     let mut buf = buffer_for_reader.lock().unwrap();
                     // store the message together with the receive timestamp
-                    buf.insert(seq_num, (msg, message_receive));
+                    buf.insert(
+                        seq_num,
+                        BufferedMessage {
+                            message: msg,
+                            received_at: message_receive,
+                            version,
+                        },
+                    );
                 }
             }
             tracing::debug!("WebSocket stream ended");
@@ -240,18 +164,19 @@ impl SequencerReader {
                             continue;
                         }
                         let first_key = *buf.keys().next().unwrap();
-                        let (msg, received_at) = buf.remove(&first_key).unwrap();
+                        let BufferedMessage { message, received_at, version } = buf.remove(&first_key).unwrap();
                         drop(buf); // release lock before processing
 
-                        let l1_msg = msg.message_with_meta_data.l1_incoming_message.clone();
-                        match parse_message(l1_msg, self.chain_id) {
+                        let l1_msg = message.message_with_meta_data.l1_incoming_message.clone();
+                        match parse_message(l1_msg, self.chain_id, version,
+                        ) {
                         Ok(messages) => {
-                                let is_last_in_block = msg.message_with_meta_data.delayed_messages_read == 0;
+                                let is_last_in_block = message.message_with_meta_data.delayed_messages_read == 0;
                                 yield Ok(SequencerMessage {
-                                    sequence_number: msg.sequence_number,
+                                    sequence_number: message.sequence_number,
                                     messages,
                                     is_last_in_block,
-                                    timestamp: msg.message_with_meta_data.l1_incoming_message.header.timestamp,
+                                    timestamp: message.message_with_meta_data.l1_incoming_message.header.timestamp,
                                     received_at,
                                 });
                         }
@@ -265,7 +190,11 @@ impl SequencerReader {
     }
 }
 
-pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Message>> {
+pub fn parse_message(
+    msg: L1IncomingMessage,
+    chain_id: ChainId,
+    version: u8,
+) -> Result<Vec<ArbTxEnvelope>> {
     let msg_type = MessageType::from_u8(msg.header.kind);
     tracing::debug!("Parsing message type: {:?}", msg_type);
 
@@ -286,8 +215,7 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Me
             match parse_l2_msg(buffer.as_mut_slice(), 0) {
                 Ok(txs) => {
                     tracing::debug!("Successfully parsed {} L2 transactions", txs.len());
-                    let messages = txs.into_iter().map(Message::Transaction).collect();
-                    Ok(messages)
+                    Ok(txs)
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse L2 message: {}", e);
@@ -315,7 +243,7 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Me
             )?;
             tracing::debug!("Parsed TxDeposit: {:?}", tx);
             tracing::debug!("TxDeposit hash: {}", tx.tx_hash());
-            Ok(vec![Message::Transaction(ArbTxEnvelope::DepositTx(tx))])
+            Ok(vec![ArbTxEnvelope::DepositTx(tx)])
         }
         MessageType::SubmitRetryable => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
@@ -341,17 +269,29 @@ pub fn parse_message(msg: L1IncomingMessage, chain_id: ChainId) -> Result<Vec<Me
                         .ok_or(eyre!("failed to deserialize base fee l1"))?,
                 ),
             )?;
-            Ok(vec![Message::Transaction(
-                ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone()),
-            )])
+            Ok(vec![ArbTxEnvelope::SubmitRetryableTx(tx.inner().clone())])
         }
         MessageType::BatchPostingReport => {
             let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
             let buffer = buffer_vec.as_mut_slice();
-            tracing::info!("Buffer: {}", hex::encode(&buffer));
-            let report = BatchPostingReport::decode_fields_sequencer(&mut &*buffer)?;
+            tracing::debug!("BatchPostingReport Buffer: {}", hex::encode(&buffer));
+            tracing::debug!(
+                "Additional args: chain_id: {}, version: {}, batch_data_stats: {:?}, legacy_batch_gas_cost: {:?}",
+                chain_id,
+                version,
+                msg.batch_data_stats,
+                msg.legacy_batch_gas_cost
+            );
+            let report = BatchPostingReport::decode_fields_sequencer(
+                &mut &*buffer,
+                chain_id,
+                version.into(),
+                msg.batch_data_stats,
+                msg.legacy_batch_gas_cost,
+            )?;
             tracing::debug!("Parsed BatchPostingReport: {:?}", report);
-            Ok(vec![Message::BatchPostingReport(report)])
+            let internal_tx = ArbitrumInternalTx::BatchPostingReport(report);
+            Ok(vec![internal_tx.into()])
         }
         _ => {
             tracing::warn!("not yet supported message type: {:?}", msg_type);
@@ -366,8 +306,8 @@ pub fn parse_submit_retryable(
     sender: Address,
     request_id: B256,
     l1_base_fee: U256,
-) -> Result<Recovered<TxSubmitRetryable>> {
-    let tx = TxSubmitRetryable::decode_fields_sequencer(
+) -> Result<Recovered<SubmitRetryableTx>> {
+    let tx = SubmitRetryableTx::decode_fields_sequencer(
         msg,
         U256::from(chain_id),
         U256::from_be_bytes(request_id.0),

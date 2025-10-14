@@ -1,0 +1,18 @@
+[package]
+name = "arb-alloy-consensus"
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+[lib]
+path = "src/lib.rs"
+[dependencies]
+alloy-consensus = "1.0.38"
+alloy-eips = "1.0.38"
+alloy-primitives = "1.4.0"
+alloy-rlp = "0.3.12"
+bytes = "1.10.1"
+serde = "1.0.228"
+alloy-core = { version = "1.0.38", features = ["sol-types"] }
+alloy-contract = "1.0.38"
+arb-alloy-network.workspace = true
+tracing = "0.1.37"

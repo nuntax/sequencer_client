@@ -1,9 +1,12 @@
 use std::sync::OnceLock;
 
-use alloy::eips::{
-    Decodable2718, Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization,
-};
 use alloy_consensus::{Transaction, Typed2718};
+use alloy_eips::{
+    Decodable2718, Encodable2718,
+    eip2718::{Eip2718Error, Eip2718Result},
+    eip2930::AccessList,
+    eip7702::SignedAuthorization,
+};
 use alloy_primitives::{
     Address, B256, Bytes, ChainId, FixedBytes, TxHash, TxKind, U256, keccak256,
 };
@@ -11,16 +14,10 @@ use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 use bytes::Buf;
 use serde::{Deserialize, Serialize};
 
-use crate::types::consensus::transactions::util::{decode, decode_rest};
-///Main module for the sequencer reader crate.
-///
-///
-///
-///
-///
+use crate::transactions::util::{decode, decode_rest};
 /// https://github.com/OffchainLabs/nitro/blob/23cae22e1f76cf3675f965d78e268fd2870d8708/arbos/parse_l2.go#L292
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
-pub struct TxSubmitRetryable {
+pub struct SubmitRetryableTx {
     chain_id: U256,
     request_id: U256, // THIS IS THE MESSAGE NUMBER, WHY ARE THEY CALLING IT REQUEST_ID?
     from: Address,
@@ -40,7 +37,7 @@ pub struct TxSubmitRetryable {
     tx_hash: OnceLock<TxHash>,
 }
 
-impl TxSubmitRetryable {
+impl SubmitRetryableTx {
     pub fn from(&self) -> Address {
         self.from
     }
@@ -48,7 +45,7 @@ impl TxSubmitRetryable {
     pub fn tx_hash(&self) -> TxHash {
         *self.tx_hash.get_or_init(|| {
             let mut encoded = Vec::new();
-            self.rlp_encode(&mut encoded);
+            self.encode_2718(&mut encoded);
             keccak256(&encoded).into()
         })
     }
@@ -154,7 +151,7 @@ impl TxSubmitRetryable {
             retry_value: decode(buf)?,
             deposit_value: decode(buf)?,
             max_submission_fee: decode(buf).inspect(|_| {
-                //we have to advance the buffer here because addresses are 20 bytes but nitro for some reason encodes them as 32 bytes, maybe its some rlp thing?
+                //we have to advance the buffer here because addresses are 20 bytes but nitro for some reason encodes them as 32 bytes, probably to pad them to u256
                 buf.advance(12);
             })?,
             fee_refund_address: decode(buf).inspect(|_| {
@@ -203,27 +200,27 @@ impl TxSubmitRetryable {
     }
 }
 
-impl Decodable for TxSubmitRetryable {
+impl Decodable for SubmitRetryableTx {
     fn decode(data: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Self::rlp_decode(data)
     }
 }
 
-impl Decodable2718 for TxSubmitRetryable {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy::eips::eip2718::Eip2718Result<Self> {
+impl Decodable2718 for SubmitRetryableTx {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         if ty != 105 {
-            return Err(alloy::eips::eip2718::Eip2718Error::UnexpectedType(ty));
+            return Err(Eip2718Error::UnexpectedType(ty));
         }
         let tx = Self::rlp_decode(buf)?;
         Ok(tx)
     }
 
-    fn fallback_decode(buf: &mut &[u8]) -> alloy::eips::eip2718::Eip2718Result<Self> {
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(Self::decode(buf)?)
     }
 }
 
-impl Transaction for TxSubmitRetryable {
+impl Transaction for SubmitRetryableTx {
     #[doc = " Get `chain_id`."]
     fn chain_id(&self) -> Option<ChainId> {
         Some(self.chain_id.to())
@@ -311,14 +308,14 @@ impl Transaction for TxSubmitRetryable {
     }
 }
 
-impl Typed2718 for TxSubmitRetryable {
+impl Typed2718 for SubmitRetryableTx {
     #[doc = " Returns the EIP-2718 type flag."]
     fn ty(&self) -> u8 {
         105
     }
 }
 
-impl Encodable2718 for TxSubmitRetryable {
+impl Encodable2718 for SubmitRetryableTx {
     #[doc = " The length of the 2718 encoded envelope. This is the length of the type"]
     #[doc = " flag + the length of the inner encoding."]
     fn encode_2718_len(&self) -> usize {
@@ -341,13 +338,14 @@ impl Encodable2718 for TxSubmitRetryable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::hex::FromHex;
     use alloy_primitives::address;
+    use alloy_primitives::hex;
+    use alloy_primitives::hex::FromHex;
     #[test]
     fn test_decode_submit_retryable() {
-        //https://arbiscan.io/tx/0x6d3e1568b91fdc70f2e267c315d0b8387fe08552199028ea8b5eac336f6c1f4a
+        //https://arbiscan.io/tx/0x19f98fc86cae7ac924a2ad789e86fca824aff065ec7366daedeb1d8e60ae96f5
         let encoded = hex::decode(
-            "0000000000000000000000001f4ef5dee700ad835a36b160ad9caeb4b80c0e500000000000000000000000000000000000000000000000015af1d78b58c400000000000000000000000000000000000000000000000000015af1da51da16ee60000000000000000000000000000000000000000000000000000001462397986000000000000000000000000008f9c294928efd8b76498c360a179927910f35ce0000000000000000000000001f4ef5dee700ad835a36b160ad9caeb4b80c0e500000000000000000000000000000000000000000000000000000000000006b7a00000000000000000000000000000000000000000000000000000000039387000000000000000000000000000000000000000000000000000000000000000000",
+            "000000000000000000000000abc50aee89c1b38d4ddc4ac0aee43647215ff7fc000000000000000000000000000000000000000000000000002382664887b00000000000000000000000000000000000000000000000000000239debfd13ec00000000000000000000000000000000000000000000000000000001bdcb71f400000000000000000000000000abc50aee89c1b38d4ddc4ac0aee43647215ff7fc000000000000000000000000abc50aee89c1b38d4ddc4ac0aee43647215ff7fc00000000000000000000000000000000000000000000000000000000000493e00000000000000000000000000000000000000000000000000000000005a1c5c00000000000000000000000000000000000000000000000000000000000000000",
         ).unwrap();
         let mut buf = &encoded[..];
         println!(
@@ -355,11 +353,11 @@ mod tests {
             hex::encode(&buf),
             hex::encode(&buf).len()
         );
-        let from = address!("0x1A0ac294928EFd8b76498c360A179927910F46dF");
-        let l1_base_fee = U256::from(236119188);
-        let request_id = U256::from(0x1fa928u64);
+        let from = address!("0x8789dfc2406ac2d60f174813e8a79f2b69862566");
+        let l1_base_fee = U256::from(335396856);
+        let request_id = U256::from(0x20eb40);
 
-        let tx: TxSubmitRetryable = TxSubmitRetryable::decode_fields_sequencer(
+        let tx: SubmitRetryableTx = SubmitRetryableTx::decode_fields_sequencer(
             &mut buf,
             U256::from(42161),
             request_id,
@@ -370,7 +368,7 @@ mod tests {
         let hash = tx.tx_hash();
         assert_eq!(
             hash,
-            TxHash::from_hex("0x6d3e1568b91fdc70f2e267c315d0b8387fe08552199028ea8b5eac336f6c1f4a")
+            TxHash::from_hex("0x19f98fc86cae7ac924a2ad789e86fca824aff065ec7366daedeb1d8e60ae96f5")
                 .unwrap()
         )
     }
