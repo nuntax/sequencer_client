@@ -1,11 +1,13 @@
 use std::sync::OnceLock;
 
-use alloy::eips::Decodable2718;
-use alloy::eips::Encodable2718;
-use alloy::eips::eip2930::AccessList;
-use alloy::eips::eip7702::SignedAuthorization;
 use alloy_consensus::Transaction;
 use alloy_consensus::Typed2718;
+use alloy_eips::Decodable2718;
+use alloy_eips::Encodable2718;
+use alloy_eips::eip2718::Eip2718Error;
+use alloy_eips::eip2718::Eip2718Result;
+use alloy_eips::eip2930::AccessList;
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::B256;
 use alloy_primitives::Bytes;
 use alloy_primitives::ChainId;
@@ -18,10 +20,9 @@ use alloy_rlp::Decodable;
 use alloy_rlp::Encodable;
 use alloy_rlp::Header;
 use bytes::BufMut;
-use eyre::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::types::consensus::transactions::ArbTxType;
+use crate::transactions::ArbTxType;
 
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct TxDeposit {
@@ -51,7 +52,7 @@ impl TxDeposit {
         chain_id: U256,
         request_id: FixedBytes<32>,
         from: Address,
-    ) -> Result<Self> {
+    ) -> Result<Self, alloy_rlp::Error> {
         let value: U256 = Decodable::decode(buf)?;
         let to: Address = Decodable::decode(buf)?;
         Ok(Self {
@@ -124,15 +125,15 @@ impl Decodable for TxDeposit {
     }
 }
 impl Decodable2718 for TxDeposit {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy::eips::eip2718::Eip2718Result<Self> {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         if ty != ArbTxType::SubmitRetryableTx as u8 {
-            return Err(alloy::eips::eip2718::Eip2718Error::UnexpectedType(ty));
+            return Err(Eip2718Error::UnexpectedType(ty));
         }
         let tx = Self::rlp_decode(buf)?;
         Ok(tx)
     }
 
-    fn fallback_decode(buf: &mut &[u8]) -> alloy::eips::eip2718::Eip2718Result<Self> {
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(Self::decode(buf)?)
     }
 }
