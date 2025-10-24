@@ -17,14 +17,13 @@ seemingly make up for 80% of transactions, I created this library.
 In the long run, types from this library could be extracted into a seperate crate at some point to support arbitrum tooling in rust.
 ## Example 
 ```rust
-use color_eyre::install;
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
 #[tokio::main()]
 async fn main() {
     let url = "wss://arb1-feed.arbitrum.io/feed";
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::DEBUG) // Changed to DEBUG to see more logs
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set global default subscriber");
@@ -37,55 +36,41 @@ async fn main() {
 
     tracing::info!("Connecting to sequencer at {}", url);
 
-    let reader = SequencerReader::new(url, 42161).await;
+    let reader = SequencerReader::new(url, 42161, 10).await;
 
     let mut stream = reader.into_stream();
     tracing::info!("Created stream, starting to read messages...");
 
-    let mut count = 0;
     let timeout = std::time::Duration::from_secs(30);
 
     loop {
         match tokio::time::timeout(timeout, stream.next()).await {
             Ok(Some(msg_result)) => {
-                count += 1;
-                tracing::info!("Received message #{}", count);
-
                 match msg_result {
-                    Ok(msg) => match msg.tx.inner() {
-                        sequencer_client::types::transactions::ArbTxEnvelope::Legacy(signed) => {
-                            tracing::info!(
-                                "Received legacy transaction with hash {}",
-                                signed.hash()
-                            );
+                    Ok(msg) => {
+                        tracing::info!(
+                            "Received message: {:?}, elapsed: {:?}",
+                            msg.sequence_number,
+                            msg.received_at.elapsed(),
+                        );
+                        for tx in msg.messages {
+                            match tx {
+                            arb_alloy_consensus::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                                tracing::info!("DepositTx from: {:?}, hash: {:?}", tx_deposit.from(), tx_deposit.tx_hash());
+                            },
+                            arb_alloy_consensus::transactions::ArbTxEnvelope::SubmitRetryableTx(submit_retryable_tx) => {
+                                tracing::info!("RetryableTx from: {:?}, hash: {:?}", submit_retryable_tx.from(), submit_retryable_tx.tx_hash());
+
+                            },
+                            arb_alloy_consensus::transactions::ArbTxEnvelope::ArbitrumInternal(arbitrum_internal_tx) => {
+                                tracing::info!("BatchPostingReport from: {:?}, hash: {:?}", arbitrum_internal_tx.from(), arbitrum_internal_tx.tx_hash());
+
+                            },
+                            _ => {
+                            }
                         }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip2930(signed) => {
-                            tracing::info!(
-                                "Received EIP-2930 transaction with hash {}",
-                                signed.hash()
-                            );
                         }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip1559(signed) => {
-                            tracing::info!(
-                                "Received EIP-1559 transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::Eip7702(signed) => {
-                            tracing::info!(
-                                "Received EIP-7702 transaction with hash {}",
-                                signed.hash()
-                            );
-                        }
-                        sequencer_client::types::transactions::ArbTxEnvelope::ArbRetryable(
-                            tx_submit_retryable,
-                        ) => {
-                            tracing::info!(
-                                "Received ArbRetryable transaction with hash {}",
-                                tx_submit_retryable.tx_hash()
-                            );
-                        }
-                    },
+                    }
                     Err(e) => {
                         tracing::error!("Error in received message: {:?}", e);
                     }
