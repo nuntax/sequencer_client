@@ -182,7 +182,7 @@ impl SequencerReader {
                                     is_last_in_block,
                                     timestamp: message.message_with_meta_data.l1_incoming_message.header.timestamp,
                                     received_at,
-                                    l1_header: L1Header::from_header(&message.message_with_meta_data.l1_incoming_message.header).unwrap(),
+                                    l1_header: L1Header::from_header(&message.message_with_meta_data.l1_incoming_message.header, message.message_with_meta_data.delayed_messages_read).unwrap(),
                                 });
                         }
                         Err(e) => {
