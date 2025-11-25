@@ -1,6 +1,9 @@
+use std::str::FromStr;
+
+use alloy_core::hex::FromHex;
+use alloy_primitives::{Address, FixedBytes, U256};
 use serde::*;
 use serde_json::Value;
-
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Root {
@@ -54,6 +57,45 @@ pub struct Header {
     pub base_fee_l1: Value,
     pub poster: String,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L1Header {
+    kind: u8,
+    sender: Address,
+    block_number: u64,
+    timestamp: u64,
+    request_id: FixedBytes<32>,
+    base_fee_l1: U256,
+    poster: Address,
+}
+impl L1Header {
+    pub fn from_header(header: &Header) -> Result<Self, String> {
+        let sender = Address::from_str(&header.sender)
+            .map_err(|e| format!("failed to parse sender address: {}", e))?;
+        let poster = Address::from_str(&header.poster)
+            .map_err(|e| format!("failed to parse poster address: {}", e))?;
+        let request_id_str = header
+            .request_id
+            .as_str()
+            .ok_or("failed to get request_id as str")?;
+        let request_id = FixedBytes::from_hex(request_id_str)
+            .map_err(|e| format!("failed to parse request_id: {}", e))?;
+        let base_fee_l1_u64 = header
+            .base_fee_l1
+            .as_u64()
+            .ok_or("failed to get base_fee_l1 as u64")?;
+        let base_fee_l1 = U256::from(base_fee_l1_u64);
+        Ok(L1Header {
+            kind: header.kind,
+            sender,
+            block_number: header.block_number,
+            timestamp: header.timestamp,
+            request_id,
+            base_fee_l1,
+            poster,
+        })
+    }
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {

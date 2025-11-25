@@ -17,6 +17,7 @@ use arb_alloy_consensus::transactions::batchpostingreport::BatchPostingReport;
 use arb_alloy_consensus::transactions::internal::ArbitrumInternalTx;
 use arb_alloy_consensus::transactions::submit_retryable::SubmitRetryableTx;
 use arb_alloy_network::sequencer::feed::BroadcastFeedMessage;
+use arb_alloy_network::sequencer::feed::L1Header;
 use arb_alloy_network::sequencer::feed::L1IncomingMessage;
 use arb_alloy_network::sequencer::feed::MessageType;
 use arb_alloy_network::sequencer::feed::Root;
@@ -49,14 +50,8 @@ pub struct SequencerMessage {
     pub timestamp: u64,
     /// local instant when the message was received from websocket
     pub received_at: Instant,
-    /// poster
-    pub poster: Address,
-    /// sender
-    pub sender: Address,
-    /// L1 base fee
-    pub base_fee_l1: U256,
-    /// request_id
-    pub request_id: B256,
+    /// l1header
+    pub l1_header: L1Header,
 }
 
 #[derive(Debug, Clone)]
@@ -187,16 +182,7 @@ impl SequencerReader {
                                     is_last_in_block,
                                     timestamp: message.message_with_meta_data.l1_incoming_message.header.timestamp,
                                     received_at,
-                                    poster: Address::from_str(&message.message_with_meta_data.l1_incoming_message.header.poster)?,
-                                    sender: Address::from_str(&message.message_with_meta_data.l1_incoming_message.header.sender)?,
-                                    base_fee_l1: U256::from(
-                                        message.message_with_meta_data.l1_incoming_message.header.base_fee_l1.as_u64().ok_or(eyre!("failed to deserialize base fee l1"))?
-                                    ),
-                                    request_id: FixedBytes::from_hex(
-                                        message.message_with_meta_data.l1_incoming_message.header.request_id
-                                        .as_str()
-                                        .ok_or(eyre!("failed to deserialize request_id"))?,
-                                    )?
+                                    l1_header: L1Header::from_header(&message.message_with_meta_data.l1_incoming_message.header).unwrap(),
                                 });
                         }
                         Err(e) => {
