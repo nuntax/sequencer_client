@@ -59,14 +59,14 @@ pub struct Header {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct L1Header {
-    kind: u8,
-    sender: Address,
-    block_number: u64,
-    timestamp: u64,
-    request_id: FixedBytes<32>,
-    base_fee_l1: U256,
-    poster: Address,
-    delayed_messages_read: u64,
+    pub kind: u8,
+    pub sender: Address,
+    pub block_number: u64,
+    pub timestamp: u64,
+    pub request_id: FixedBytes<32>,
+    pub base_fee_l1: U256,
+    pub poster: Address,
+    pub delayed_messages_read: u64,
 }
 impl L1Header {
     pub fn from_header(header: &Header, delayed_messages_read: u64) -> Result<Self, String> {
