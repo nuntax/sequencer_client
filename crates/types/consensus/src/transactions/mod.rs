@@ -1,7 +1,9 @@
 use std::fmt::Display;
 
-use alloy_consensus::{Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
-use alloy_primitives::{Address, TxHash};
+use alloy_consensus::{
+    SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
+};
+use alloy_primitives::{Address, Signature, TxHash};
 pub use deposit::TxDeposit;
 
 use crate::transactions::{internal::ArbitrumInternalTx, submit_retryable::SubmitRetryableTx};

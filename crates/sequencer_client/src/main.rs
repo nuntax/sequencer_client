@@ -34,7 +34,7 @@ async fn main() {
                             msg.sequence_number,
                             msg.received_at.elapsed(),
                         );
-                        for tx in msg.messages {
+                        for tx in msg.txs {
                             match tx {
                             arb_alloy_consensus::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
                                 tracing::info!("DepositTx from: {:?}, hash: {:?}", tx_deposit.from(), tx_deposit.tx_hash());

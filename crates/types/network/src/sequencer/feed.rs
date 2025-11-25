@@ -52,6 +52,7 @@ pub struct Header {
     pub timestamp: u64,
     pub request_id: Value,
     pub base_fee_l1: Value,
+    pub poster: String,
 }
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
