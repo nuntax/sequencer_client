@@ -125,7 +125,6 @@ impl SequencerReader {
                     tracing::debug!("Received empty message");
                     continue;
                 }
-                tracing::debug!("Received message: {}", msg_text);
                 let (messages, version) = match serde_json::from_str::<Root>(&msg_text) {
                     Ok(r) => {
                         if let Some(msgs) = r.messages {
