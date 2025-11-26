@@ -61,28 +61,29 @@ pub struct L1Header {
     pub kind: u8,
     pub block_number: u64,
     pub timestamp: u64,
-    pub request_id: FixedBytes<32>,
-    pub base_fee_l1: U256,
+    pub request_id: Option<FixedBytes<32>>,
+    pub base_fee_l1: Option<U256>,
     pub poster: Address,
     pub delayed_messages_read: u64,
 }
 impl L1Header {
     pub fn from_header(header: &Header, delayed_messages_read: u64) -> Result<Self, String> {
+        dbg!(&header);
         let sender = Address::from_str(&header.sender)
             .map_err(|e| format!("failed to parse sender address: {}", e))?;
         let poster = Address::from_str(&header.sender)
             .map_err(|e| format!("failed to parse poster address: {}", e))?;
-        let request_id_str = header
-            .request_id
-            .as_str()
-            .ok_or("failed to get request_id as str")?;
-        let request_id = FixedBytes::from_hex(request_id_str)
-            .map_err(|e| format!("failed to parse request_id: {}", e))?;
-        let base_fee_l1_u64 = header
-            .base_fee_l1
-            .as_u64()
-            .ok_or("failed to get base_fee_l1 as u64")?;
-        let base_fee_l1 = U256::from(base_fee_l1_u64);
+        let request_id_str = header.request_id.as_str();
+        let request_id = match request_id_str {
+            Some(s) => {
+                let bytes = <[u8; 32]>::from_hex(s.trim_start_matches("0x"))
+                    .map_err(|e| format!("failed to parse request_id hex string '{}': {}", s, e))?;
+                Some(FixedBytes::from(bytes))
+            }
+            None => None,
+        };
+        let base_fee_l1_u64 = header.base_fee_l1.as_u64();
+        let base_fee_l1 = base_fee_l1_u64.map(|x| U256::from(x));
         Ok(L1Header {
             kind: header.kind,
             block_number: header.block_number,
