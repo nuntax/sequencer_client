@@ -55,12 +55,10 @@ pub struct Header {
     pub timestamp: u64,
     pub request_id: Value,
     pub base_fee_l1: Value,
-    pub poster: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct L1Header {
     pub kind: u8,
-    pub sender: Address,
     pub block_number: u64,
     pub timestamp: u64,
     pub request_id: FixedBytes<32>,
@@ -72,7 +70,7 @@ impl L1Header {
     pub fn from_header(header: &Header, delayed_messages_read: u64) -> Result<Self, String> {
         let sender = Address::from_str(&header.sender)
             .map_err(|e| format!("failed to parse sender address: {}", e))?;
-        let poster = Address::from_str(&header.poster)
+        let poster = Address::from_str(&header.sender)
             .map_err(|e| format!("failed to parse poster address: {}", e))?;
         let request_id_str = header
             .request_id
@@ -87,7 +85,6 @@ impl L1Header {
         let base_fee_l1 = U256::from(base_fee_l1_u64);
         Ok(L1Header {
             kind: header.kind,
-            sender,
             block_number: header.block_number,
             timestamp: header.timestamp,
             request_id,
