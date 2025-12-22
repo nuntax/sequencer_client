@@ -32,9 +32,9 @@ use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Instant;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio_stream::StreamMap;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -146,7 +146,7 @@ impl SequencerReader {
                         continue;
                     }
                     dedup_map.insert(seq_num);
-                    let mut buf = buffer_for_reader.lock().unwrap();
+                    let mut buf = buffer_for_reader.lock().await;
                     // store the message together with the receive timestamp
                     buf.insert(
                         seq_num,
@@ -162,7 +162,7 @@ impl SequencerReader {
         });
         Box::pin(stream! {
                 loop {
-                    let mut buf = self.buffer.lock().unwrap();
+                    let mut buf = self.buffer.lock().await;
                         if buf.is_empty() {
                             drop(buf); // release lock before sleeping
                             continue;

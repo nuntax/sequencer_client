@@ -19,7 +19,7 @@ use crate::transactions::util::{decode, decode_rest};
 #[derive(PartialEq, Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct SubmitRetryableTx {
     chain_id: U256,
-    request_id: U256, // THIS IS THE MESSAGE NUMBER, WHY ARE THEY CALLING IT REQUEST_ID?
+    request_id: U256,
     from: Address,
     l1_base_fee: U256, // base fee of the L1 transaction that created this retryable
 
