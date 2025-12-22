@@ -68,7 +68,6 @@ pub struct L1Header {
 }
 impl L1Header {
     pub fn from_header(header: &Header, delayed_messages_read: u64) -> Result<Self, String> {
-        dbg!(&header);
         let sender = Address::from_str(&header.sender)
             .map_err(|e| format!("failed to parse sender address: {}", e))?;
         let poster = Address::from_str(&header.sender)
