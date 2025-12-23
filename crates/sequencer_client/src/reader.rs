@@ -77,7 +77,12 @@ pub struct SequencerReader {
 
 impl SequencerReader {
     /// Creates a new SequencerReader and connects to the given URL.
-    /// Returns a tuple containing the SequencerReader and the receiver part of the mpsc channel.
+    /// Returns a SequencerReader instance.
+    /// To use the reader, call `into_stream` to get a stream of SequencerMessage results.
+    /// # Arguments
+    /// * `url` - The URL of the Arbitrum sequencer feed WebSocket
+    /// * `chain_id` - The chain ID of the Arbitrum network.
+    /// * `connections` - The number of parallel WebSocket connections to establish. (Recommended: less than 10)
     pub async fn new(url: &str, chain_id: ChainId, connections: u8) -> Self {
         let connections = connections.max(1); // Ensure at least 1 connection
         let mut stream_map = StreamMap::new();
@@ -97,7 +102,6 @@ impl SequencerReader {
     }
 
     /// Converts the SequencerReader into a stream of SequencerMessage results.
-    /// This provides an alternative to using the mpsc channel approach.
     pub fn into_stream(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
         tracing::debug!(
             "Creating sequencer message stream with {} connections",
@@ -111,6 +115,12 @@ impl SequencerReader {
             while let Some(message) = self.stream_map.next().await {
                 if message.1.is_err() {
                     tracing::error!("Error receiving message: {:?}", message.1.err().unwrap());
+                    // reconnect the websocket
+                    tracing::debug!("Reconnecting websocket for connection {}", message.0);
+                    let (ws_stream, _) = tokio_tungstenite::connect_async(&self.url)
+                        .await
+                        .expect("Failed to reconnect");
+                    self.stream_map.insert(message.0, ws_stream);
                     continue;
                 }
                 let message = message.1.unwrap();
