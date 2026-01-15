@@ -2,12 +2,12 @@
 name = "sequencer_client"
 version = "0.5.0"
 edition = "2024"
-license-file = "LICENSE"
+license-file = "../../LICENSE"
 description = "A library for reading the Arbitrum Sequencer feed."
 repository = "https://github.com/nuntax/sequencer_client"
 homepage = "https://github.com/nuntax/sequencer_client"
 authors = ["nuntax"]
-readme = "README.md"
+readme = "../../README.md"
 keywords = ["web3"]
 [dependencies]
 alloy = { version = "1.0.23", features = [

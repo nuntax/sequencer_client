@@ -43,8 +43,6 @@ pub struct SequencerMessage {
     pub sequence_number: u64,
     /// The messages
     pub txs: Vec<ArbTxEnvelope>,
-    /// is last message in block
-    pub is_last_in_block: bool,
     /// timestamp of the message
     pub timestamp: u64,
     /// local instant when the message was received from websocket
@@ -184,11 +182,9 @@ impl SequencerReader {
                         match parse_message(l1_msg, self.chain_id, version,
                         ) {
                         Ok(messages) => {
-                                let is_last_in_block = message.message_with_meta_data.delayed_messages_read == 0;
                                 yield Ok(SequencerMessage {
                                     sequence_number: message.sequence_number,
                                     txs: messages,
-                                    is_last_in_block,
                                     timestamp: message.message_with_meta_data.l1_incoming_message.header.timestamp,
                                     received_at,
                                     l1_header: L1Header::from_header(&message.message_with_meta_data.l1_incoming_message.header, message.message_with_meta_data.delayed_messages_read).unwrap(),
