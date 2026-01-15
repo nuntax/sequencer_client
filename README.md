@@ -45,7 +45,7 @@ sequencer_client = "0.4"
 ```rust
 use futures_util::stream::StreamExt;
 use sequencer_client::reader::SequencerReader;
-use arb_alloy_consensus::transactions::ArbTxEnvelope;
+use arb_sequencer_consensus::transactions::ArbTxEnvelope;
 
 #[tokio::main]
 async fn main() {
@@ -130,8 +130,6 @@ Each message from the stream contains:
 
 This library uses two internal crates for Arbitrum-specific types:
 
-**`arb_alloy_consensus`**: Contains consensus-layer types for Arbitrum transactions, including deposit transactions, retryable tickets, and batch posting reports. These types extend the standard Alloy transaction types to support Arbitrum's unique transaction formats.
+**`arb_sequencer_consensus`**: Contains consensus-layer types for Arbitrum transactions, including deposit transactions, retryable tickets, and batch posting reports. These types extend the standard Alloy transaction types to support Arbitrum's unique transaction formats.
 
-**`arb_alloy_network`**: Contains network-layer types for the sequencer feed protocol, including message parsing and WebSocket communication structures.
-
-**Note on Naming**: The current naming convention doesn't follow typical Alloy crate naming patterns. These crates are named with the `arb_alloy_` prefix in anticipation of potential future extraction as standalone crates that could serve the broader Arbitrum Rust ecosystem. If extracted, the naming may be revised to better align with Alloy conventions or community feedback.
+**`arb_sequencer_network`**: Contains network-layer types for the sequencer feed protocol, including message parsing and WebSocket communication structures.

@@ -1,5 +1,5 @@
 [package]
-name = "arb-alloy-consensus"
+name = "arb-sequencer-consensus"
 version = "0.5.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
@@ -17,5 +17,5 @@ bytes.workspace = true
 serde.workspace = true
 alloy-core = { workspace = true, features = ["sol-types"] }
 alloy-contract.workspace = true
-arb-alloy-network.workspace = true
+arb-sequencer-network.workspace = true
 tracing.workspace = true

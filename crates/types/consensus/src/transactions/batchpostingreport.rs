@@ -22,7 +22,7 @@ use alloy_primitives::{Address, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_rlp::Encodable;
 use alloy_rlp::Header;
-use arb_alloy_network::sequencer::feed::BatchDataStats;
+use arb_sequencer_network::sequencer::feed::BatchDataStats;
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 

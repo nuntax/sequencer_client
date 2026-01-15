@@ -36,14 +36,14 @@ async fn main() {
                         );
                         for tx in msg.txs {
                             match tx {
-                            arb_alloy_consensus::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
+                            arb_sequencer_consensus::transactions::ArbTxEnvelope::DepositTx(tx_deposit) => {
                                 tracing::info!("DepositTx from: {:?}, hash: {:?}", tx_deposit.from(), tx_deposit.tx_hash());
                             },
-                            arb_alloy_consensus::transactions::ArbTxEnvelope::SubmitRetryableTx(submit_retryable_tx) => {
+                            arb_sequencer_consensus::transactions::ArbTxEnvelope::SubmitRetryableTx(submit_retryable_tx) => {
                                 tracing::info!("RetryableTx from: {:?}, hash: {:?}", submit_retryable_tx.from(), submit_retryable_tx.tx_hash());
 
                             },
-                            arb_alloy_consensus::transactions::ArbTxEnvelope::ArbitrumInternal(arbitrum_internal_tx) => {
+                            arb_sequencer_consensus::transactions::ArbTxEnvelope::ArbitrumInternal(arbitrum_internal_tx) => {
                                 tracing::info!("BatchPostingReport from: {:?}, hash: {:?}", arbitrum_internal_tx.from(), arbitrum_internal_tx.tx_hash());
 
                             },

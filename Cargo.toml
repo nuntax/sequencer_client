@@ -3,8 +3,8 @@ members = ["./crates/types/network", "./crates/types/consensus", "./crates/seque
 resolver = "3"
 
 [workspace.dependencies]
-arb-alloy-consensus = { version = "0.5.0", path = "./crates/types/consensus" }
-arb-alloy-network = { version = "0.5.0", path = "./crates/types/network" }
+arb-sequencer-consensus = { version = "0.5.0", path = "./crates/types/consensus" }
+arb-sequencer-network = { version = "0.5.0", path = "./crates/types/network" }
 
 # Common dependencies
 alloy-consensus = "1.4.3"

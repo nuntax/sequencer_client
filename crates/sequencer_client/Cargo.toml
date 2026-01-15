@@ -30,5 +30,5 @@ eyre = "0.6.12"
 color-eyre = "0.6.5"
 bytes.workspace = true
 tokio-stream = "0.1.8"
-arb-alloy-consensus.workspace = true
-arb-alloy-network.workspace = true
+arb-sequencer-consensus.workspace = true
+arb-sequencer-network.workspace = true
