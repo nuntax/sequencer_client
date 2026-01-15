@@ -73,12 +73,12 @@ fn construct_batchreportv2_data(
 fn deconstruct_batchpostreport_data(
     data: &Bytes,
 ) -> Result<ArbosActs::batchPostingReportCall, alloy_core::sol_types::Error> {
-    Ok(ArbosActs::batchPostingReportCall::abi_decode(data)?)
+    ArbosActs::batchPostingReportCall::abi_decode(data)
 }
 fn deconstruct_batchreportv2_data(
     data: &Bytes,
 ) -> Result<ArbosActs::batchPostingReportV2Call, alloy_core::sol_types::Error> {
-    Ok(ArbosActs::batchPostingReportV2Call::abi_decode(data)?)
+    ArbosActs::batchPostingReportV2Call::abi_decode(data)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,13 +91,13 @@ pub struct BatchPostingReport {
 fn get_legacy_costs_from_batch_stats(stats: &BatchDataStats) -> u64 {
     let mut gas = 4 * (stats.length - stats.non_zeros) + 16 * stats.non_zeros;
     let keccak_words = words_for_bytes(stats.length);
-    gas = gas + 30 + (keccak_words * 6);
-    gas = gas + 2 * 20000;
+    gas += 30 + (keccak_words * 6);
+    gas += 2 * 20000;
     gas
 }
 
 fn words_for_bytes(nbytes: u64) -> u64 {
-    return (nbytes + 31) / 32;
+    nbytes.div_ceil(32)
 }
 
 impl BatchPostingReport {
@@ -142,24 +142,22 @@ impl BatchPostingReport {
                 batchgas,
                 l1_base_fee,
             );
+        } else if let Some(batch_data_stats) = batch_data_stats {
+            data = construct_batchreportv2_data(
+                time_stamp,
+                batch_poster,
+                batch_num
+                    .try_into()
+                    .map_err(|_| alloy_rlp::Error::Overflow)?,
+                batch_data_stats.length,
+                batch_data_stats.non_zeros,
+                extra_gas,
+                l1_base_fee,
+            );
         } else {
-            if let Some(batch_data_stats) = batch_data_stats {
-                data = construct_batchreportv2_data(
-                    time_stamp,
-                    batch_poster,
-                    batch_num
-                        .try_into()
-                        .map_err(|_| alloy_rlp::Error::Overflow)?,
-                    batch_data_stats.length,
-                    batch_data_stats.non_zeros,
-                    extra_gas,
-                    l1_base_fee,
-                );
-            } else {
-                return Err(alloy_rlp::Error::Custom(
-                    "Batch data stats required for arbos version >= 50",
-                ));
-            }
+            return Err(alloy_rlp::Error::Custom(
+                "Batch data stats required for arbos version >= 50",
+            ));
         }
 
         Ok(Self {

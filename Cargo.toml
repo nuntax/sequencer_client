@@ -6,6 +6,19 @@ resolver = "3"
 arb-alloy-consensus = { version = "0.5.0", path = "./crates/types/consensus" }
 arb-alloy-network = { version = "0.5.0", path = "./crates/types/network" }
 
+# Common dependencies
+alloy-consensus = "1.4.3"
+alloy-contract = "1.4.3"
+alloy-core = "1.4.3"
+alloy-eips = "1.4.3"
+alloy-primitives = "1.4.3"
+alloy-rlp = "0.3.12"
+bytes = "1.11.0"
+serde = "1.0.228"
+serde_derive = "1.0.228"
+serde_json = "1.0.149"
+tracing = "0.1.41"
+
 [workspace.metadata.release]
 # Publish crates in dependency order
 publish = true

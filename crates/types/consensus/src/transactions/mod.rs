@@ -1,9 +1,7 @@
 use std::fmt::Display;
 
-use alloy_consensus::{
-    SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
-};
-use alloy_primitives::{Address, Signature, TxHash};
+use alloy_consensus::{Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
+use alloy_primitives::{Address, TxHash};
 pub use deposit::TxDeposit;
 
 use crate::transactions::{internal::ArbitrumInternalTx, submit_retryable::SubmitRetryableTx};
@@ -60,39 +58,39 @@ impl ArbTxEnvelope {
     }
 }
 
-impl Into<ArbTxEnvelope> for ArbitrumInternalTx {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::ArbitrumInternal(self)
+impl From<ArbitrumInternalTx> for ArbTxEnvelope {
+    fn from(tx: ArbitrumInternalTx) -> Self {
+        ArbTxEnvelope::ArbitrumInternal(tx)
     }
 }
-impl Into<ArbTxEnvelope> for TxDeposit {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::DepositTx(self)
+impl From<TxDeposit> for ArbTxEnvelope {
+    fn from(tx: TxDeposit) -> Self {
+        ArbTxEnvelope::DepositTx(tx)
     }
 }
-impl Into<ArbTxEnvelope> for SubmitRetryableTx {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::SubmitRetryableTx(self)
+impl From<SubmitRetryableTx> for ArbTxEnvelope {
+    fn from(tx: SubmitRetryableTx) -> Self {
+        ArbTxEnvelope::SubmitRetryableTx(tx)
     }
 }
-impl Into<ArbTxEnvelope> for Signed<TxLegacy> {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::Legacy(self)
+impl From<Signed<TxLegacy>> for ArbTxEnvelope {
+    fn from(tx: Signed<TxLegacy>) -> Self {
+        ArbTxEnvelope::Legacy(tx)
     }
 }
-impl Into<ArbTxEnvelope> for Signed<TxEip2930> {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::Eip2930(self)
+impl From<Signed<TxEip2930>> for ArbTxEnvelope {
+    fn from(tx: Signed<TxEip2930>) -> Self {
+        ArbTxEnvelope::Eip2930(tx)
     }
 }
-impl Into<ArbTxEnvelope> for Signed<TxEip1559> {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::Eip1559(self)
+impl From<Signed<TxEip1559>> for ArbTxEnvelope {
+    fn from(tx: Signed<TxEip1559>) -> Self {
+        ArbTxEnvelope::Eip1559(tx)
     }
 }
-impl Into<ArbTxEnvelope> for Signed<TxEip7702> {
-    fn into(self) -> ArbTxEnvelope {
-        ArbTxEnvelope::Eip7702(self)
+impl From<Signed<TxEip7702>> for ArbTxEnvelope {
+    fn from(tx: Signed<TxEip7702>) -> Self {
+        ArbTxEnvelope::Eip7702(tx)
     }
 }
 

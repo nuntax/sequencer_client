@@ -46,7 +46,7 @@ impl SubmitRetryableTx {
         *self.tx_hash.get_or_init(|| {
             let mut encoded = Vec::new();
             self.encode_2718(&mut encoded);
-            keccak256(&encoded).into()
+            keccak256(&encoded)
         })
     }
 

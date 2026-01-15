@@ -57,7 +57,7 @@ impl TxDeposit {
         let to: Address = Decodable::decode(buf)?;
         Ok(Self {
             chain_id,
-            request_id: request_id,
+            request_id,
             from,
             to,
             value,
@@ -89,7 +89,7 @@ impl TxDeposit {
     pub fn rlp_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = Header::decode(buf)?;
         if !header.list {
-            return Err(alloy_rlp::Error::Custom("Expected list header".into()));
+            return Err(alloy_rlp::Error::Custom("Expected list header"));
         }
         Self::rlp_decode_fields(buf)
     }
