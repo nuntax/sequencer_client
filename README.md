@@ -27,7 +27,7 @@ A Rust library for reading and parsing messages from the Arbitrum sequencer feed
 
 ## Motivation
 
-Listening to the sequencer feed is faster than subscribing to RPC logs. Most existing libraries skip batch transactions, which make up approximately 80% of all transactions on Arbitrum. This library handles all transaction types including batched transactions.
+Listening to the sequencer feed is faster than subscribing to RPC logs (ofc it won't work if you do actually need logs since the sequencer just emits transactions). Most existing libraries skip batch transactions, which make up approximately 80% of all transactions on Arbitrum. This library handles all transaction types including batched transactions.
 
 ## Usage
 
