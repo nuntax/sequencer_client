@@ -4,7 +4,6 @@ use alloy::consensus::transaction::TxLegacy;
 use alloy::hex::FromHex;
 use alloy_consensus::TxEip1559;
 use alloy_consensus::TxEip2930;
-
 use alloy_consensus::TxEip7702;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
