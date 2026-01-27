@@ -26,21 +26,18 @@ use eyre::Result;
 use eyre::eyre;
 use fastwebsockets::{FragmentCollector, OpCode, WebSocket};
 use futures_util::stream::Stream;
-use http_body_util::Empty;
-use hyper::body::Bytes;
-use hyper::header::{CONNECTION, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE};
-use hyper::upgrade::Upgraded;
-use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio_rustls::client::TlsStream;
 
 #[derive(Debug)]
 pub struct SequencerMessage {
@@ -63,9 +60,14 @@ pub struct BufferedMessage {
     pub version: u8,
 }
 
+enum WsStream {
+    Plain(FragmentCollector<TcpStream>),
+    Tls(FragmentCollector<TlsStream<TcpStream>>),
+}
+
 /// Creates a WebSocket connection with optimized TCP settings.
 /// Enables TCP_NODELAY to disable Nagle's algorithm for lower latency.
-async fn connect_websocket_optimized(url: &str) -> Result<FragmentCollector<TokioIo<Upgraded>>> {
+async fn connect_websocket_optimized(url: &str) -> Result<WsStream> {
     // Parse URL to extract host and port
     let parsed_url = url::Url::parse(url)?;
     let host = parsed_url
@@ -113,67 +115,102 @@ async fn connect_websocket_optimized(url: &str) -> Result<FragmentCollector<Toki
             .map_err(|_| eyre!("Invalid DNS name: {}", host))?
             .to_owned();
 
-        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+        let mut tls_stream = connector.connect(server_name, tcp_stream).await?;
 
-        // Create HTTP request for WebSocket upgrade
-        let req = hyper::Request::builder()
-            .method("GET")
-            .uri(path)
-            .header("Host", host)
-            .header(UPGRADE, "websocket")
-            .header(CONNECTION, "upgrade")
-            .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
-            .header(SEC_WEBSOCKET_VERSION, "13")
-            .body(Empty::<Bytes>::new())?;
+        // Perform WebSocket handshake
+        let key = fastwebsockets::handshake::generate_key();
+        let req = format!(
+            "GET {} HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Key: {}\r\n\
+             Sec-WebSocket-Version: 13\r\n\
+             \r\n",
+            path, host, key
+        );
 
-        let (mut sender, conn) =
-            hyper::client::conn::http1::handshake(TokioIo::new(tls_stream)).await?;
+        tls_stream.write_all(req.as_bytes()).await?;
 
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                tracing::error!("WebSocket connection error: {}", e);
+        // Read response headers
+        let mut response = Vec::new();
+        let mut buf = [0u8; 1];
+        loop {
+            let n = tls_stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(eyre!("Connection closed during handshake"));
             }
-        });
+            response.push(buf[0]);
 
-        let res = sender.send_request(req).await?;
+            // Check for end of HTTP headers (\r\n\r\n)
+            if response.len() >= 4 && &response[response.len() - 4..] == b"\r\n\r\n" {
+                break;
+            }
 
-        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            return Err(eyre!("WebSocket upgrade failed: {}", res.status()));
+            // Safety check to avoid infinite loop
+            if response.len() > 8192 {
+                return Err(eyre!("WebSocket handshake response too large"));
+            }
         }
 
-        let upgraded = hyper::upgrade::on(res).await?;
-        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), fastwebsockets::Role::Client);
-        Ok(FragmentCollector::new(ws))
+        let response_str = String::from_utf8_lossy(&response);
+        if !response_str.contains("101")
+            || !response_str.to_lowercase().contains("switching protocols")
+        {
+            return Err(eyre!("WebSocket upgrade failed: {}", response_str));
+        }
+
+        let ws = WebSocket::after_handshake(tls_stream, fastwebsockets::Role::Client);
+        Ok(WsStream::Tls(FragmentCollector::new(ws)))
     } else {
-        // Create HTTP request for WebSocket upgrade
-        let req = hyper::Request::builder()
-            .method("GET")
-            .uri(path)
-            .header("Host", host)
-            .header(UPGRADE, "websocket")
-            .header(CONNECTION, "upgrade")
-            .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
-            .header(SEC_WEBSOCKET_VERSION, "13")
-            .body(Empty::<Bytes>::new())?;
+        // Plain TCP connection
+        let mut tcp_stream = tcp_stream;
 
-        let (mut sender, conn) =
-            hyper::client::conn::http1::handshake(TokioIo::new(tcp_stream)).await?;
+        // Perform WebSocket handshake
+        let key = fastwebsockets::handshake::generate_key();
+        let req = format!(
+            "GET {} HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Key: {}\r\n\
+             Sec-WebSocket-Version: 13\r\n\
+             \r\n",
+            path, host, key
+        );
 
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                tracing::error!("WebSocket connection error: {}", e);
+        tcp_stream.write_all(req.as_bytes()).await?;
+
+        // Read response headers
+        let mut response = Vec::new();
+        let mut buf = [0u8; 1];
+        loop {
+            let n = tcp_stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(eyre!("Connection closed during handshake"));
             }
-        });
+            response.push(buf[0]);
 
-        let res = sender.send_request(req).await?;
+            // Check for end of HTTP headers (\r\n\r\n)
+            if response.len() >= 4 && &response[response.len() - 4..] == b"\r\n\r\n" {
+                break;
+            }
 
-        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            return Err(eyre!("WebSocket upgrade failed: {}", res.status()));
+            // Safety check to avoid infinite loop
+            if response.len() > 8192 {
+                return Err(eyre!("WebSocket handshake response too large"));
+            }
         }
 
-        let upgraded = hyper::upgrade::on(res).await?;
-        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), fastwebsockets::Role::Client);
-        Ok(FragmentCollector::new(ws))
+        let response_str = String::from_utf8_lossy(&response);
+        if !response_str.contains("101")
+            || !response_str.to_lowercase().contains("switching protocols")
+        {
+            return Err(eyre!("WebSocket upgrade failed: {}", response_str));
+        }
+
+        let ws = WebSocket::after_handshake(tcp_stream, fastwebsockets::Role::Client);
+        Ok(WsStream::Plain(FragmentCollector::new(ws)))
     }
 }
 
@@ -220,7 +257,12 @@ impl SequencerReader {
                     tracing::debug!("WebSocket connection {} established", i);
 
                     loop {
-                        let frame = match ws.read_frame().await {
+                        let frame = match &mut ws {
+                            WsStream::Plain(ws) => ws.read_frame().await,
+                            WsStream::Tls(ws) => ws.read_frame().await,
+                        };
+
+                        let frame = match frame {
                             Ok(f) => f,
                             Err(e) => {
                                 tracing::error!("Error reading frame on connection {}: {}", i, e);
@@ -247,10 +289,12 @@ impl SequencerReader {
                                 break;
                             }
                             OpCode::Ping => {
-                                if let Err(e) = ws
-                                    .write_frame(fastwebsockets::Frame::pong(frame.payload))
-                                    .await
-                                {
+                                let pong_frame = fastwebsockets::Frame::pong(frame.payload);
+                                let result = match &mut ws {
+                                    WsStream::Plain(ws) => ws.write_frame(pong_frame).await,
+                                    WsStream::Tls(ws) => ws.write_frame(pong_frame).await,
+                                };
+                                if let Err(e) = result {
                                     tracing::error!("Failed to send pong: {}", e);
                                     break;
                                 }
@@ -553,7 +597,7 @@ fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<ArbTxEnvelope>> {
             loop {
                 // first 8 bytes after the kind are
                 let mut length_buf = [0u8; 8];
-                match cursor.read_exact(&mut length_buf) {
+                match std::io::Read::read_exact(&mut cursor, &mut length_buf) {
                     Ok(_) => {}
                     Err(_) => break, //end of batch
                 }
@@ -568,7 +612,7 @@ fn parse_l2_msg(bytes: &mut [u8], depth: u32) -> Result<Vec<ArbTxEnvelope>> {
                 }
 
                 let mut msg_buf = vec![0u8; msg_len as usize];
-                if cursor.read_exact(&mut msg_buf).is_err() {
+                if std::io::Read::read_exact(&mut cursor, &mut msg_buf).is_err() {
                     break;
                 }
 
