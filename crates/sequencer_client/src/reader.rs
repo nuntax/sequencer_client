@@ -24,8 +24,14 @@ use async_stream::stream;
 use base64::prelude::*;
 use eyre::Result;
 use eyre::eyre;
-use futures_util::StreamExt;
+use fastwebsockets::{FragmentCollector, OpCode, WebSocket};
 use futures_util::stream::Stream;
+use http_body_util::Empty;
+use hyper::body::Bytes;
+use hyper::header::{CONNECTION, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE};
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
+use rustls::pki_types::ServerName;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
@@ -34,9 +40,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio_stream::StreamMap;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use rustls::pki_types::ServerName;
+use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub struct SequencerMessage {
@@ -61,14 +65,21 @@ pub struct BufferedMessage {
 
 /// Creates a WebSocket connection with optimized TCP settings.
 /// Enables TCP_NODELAY to disable Nagle's algorithm for lower latency.
-async fn connect_websocket_optimized(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-
+async fn connect_websocket_optimized(url: &str) -> Result<FragmentCollector<TokioIo<Upgraded>>> {
     // Parse URL to extract host and port
     let parsed_url = url::Url::parse(url)?;
-    let host = parsed_url.host_str().ok_or_else(|| eyre!("Invalid URL: no host"))?;
-    let port = parsed_url.port_or_known_default().ok_or_else(|| eyre!("Invalid URL: no port"))?;
+    let host = parsed_url
+        .host_str()
+        .ok_or_else(|| eyre!("Invalid URL: no host"))?;
+    let port = parsed_url
+        .port_or_known_default()
+        .ok_or_else(|| eyre!("Invalid URL: no port"))?;
     let is_wss = parsed_url.scheme() == "wss";
+    let path = if parsed_url.path().is_empty() {
+        "/"
+    } else {
+        parsed_url.path()
+    };
 
     // Create TCP connection
     let addr = format!("{}:{}", host, port);
@@ -82,14 +93,14 @@ async fn connect_websocket_optimized(url: &str) -> Result<WebSocketStream<MaybeT
     // let _ = tcp_stream.set_recv_buffer_size(2_097_152); // 2MB
     // let _ = tcp_stream.set_send_buffer_size(2_097_152); // 2MB
 
-    // Wrap in TLS if needed
-    let stream: MaybeTlsStream<TcpStream> = if is_wss {
+    if is_wss {
         // Load native root certificates
         let mut root_store = rustls::RootCertStore::empty();
         let certs = rustls_native_certs::load_native_certs();
 
         for cert in certs.certs {
-            root_store.add(cert)
+            root_store
+                .add(cert)
                 .map_err(|e| eyre!("Failed to add cert: {}", e))?;
         }
 
@@ -103,26 +114,75 @@ async fn connect_websocket_optimized(url: &str) -> Result<WebSocketStream<MaybeT
             .to_owned();
 
         let tls_stream = connector.connect(server_name, tcp_stream).await?;
-        MaybeTlsStream::Rustls(tls_stream)
+
+        // Create HTTP request for WebSocket upgrade
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri(path)
+            .header("Host", host)
+            .header(UPGRADE, "websocket")
+            .header(CONNECTION, "upgrade")
+            .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
+            .header(SEC_WEBSOCKET_VERSION, "13")
+            .body(Empty::<Bytes>::new())?;
+
+        let (mut sender, conn) =
+            hyper::client::conn::http1::handshake(TokioIo::new(tls_stream)).await?;
+
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::error!("WebSocket connection error: {}", e);
+            }
+        });
+
+        let res = sender.send_request(req).await?;
+
+        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(eyre!("WebSocket upgrade failed: {}", res.status()));
+        }
+
+        let upgraded = hyper::upgrade::on(res).await?;
+        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), fastwebsockets::Role::Client);
+        Ok(FragmentCollector::new(ws))
     } else {
-        MaybeTlsStream::Plain(tcp_stream)
-    };
+        // Create HTTP request for WebSocket upgrade
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri(path)
+            .header("Host", host)
+            .header(UPGRADE, "websocket")
+            .header(CONNECTION, "upgrade")
+            .header(SEC_WEBSOCKET_KEY, fastwebsockets::handshake::generate_key())
+            .header(SEC_WEBSOCKET_VERSION, "13")
+            .body(Empty::<Bytes>::new())?;
 
-    // Perform WebSocket handshake
-    let request = url.into_client_request()?;
-    let (ws_stream, _) = tokio_tungstenite::client_async(request, stream).await?;
+        let (mut sender, conn) =
+            hyper::client::conn::http1::handshake(TokioIo::new(tcp_stream)).await?;
 
-    Ok(ws_stream)
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::error!("WebSocket connection error: {}", e);
+            }
+        });
+
+        let res = sender.send_request(req).await?;
+
+        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(eyre!("WebSocket upgrade failed: {}", res.status()));
+        }
+
+        let upgraded = hyper::upgrade::on(res).await?;
+        let ws = WebSocket::after_handshake(TokioIo::new(upgraded), fastwebsockets::Role::Client);
+        Ok(FragmentCollector::new(ws))
+    }
 }
 
 /// SequencerReader is the main struct of this library.
 /// It is used to connect to the Arbitrum sequencer feed and read messages from it.
 #[derive(Debug)]
 pub struct SequencerReader {
-    /// The WebSocket stream used to connect to the Arbitrum sequencer feed.
-    stream_map: StreamMap<u8, WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    /// The url
-    url: String,
+    /// Receiver for WebSocket messages
+    rx: mpsc::UnboundedReceiver<(String, Instant)>,
     /// The chain ID of the Arbitrum network.
     pub chain_id: ChainId,
     /// The buffer for out-of-order messages.
@@ -139,17 +199,74 @@ impl SequencerReader {
     /// * `connections` - The number of parallel WebSocket connections to establish. (Recommended: less than 10)
     pub async fn new(url: &str, chain_id: ChainId, connections: u8) -> Self {
         let connections = connections.max(1); // Ensure at least 1 connection
-        let mut stream_map = StreamMap::new();
+        let (tx, rx) = mpsc::unbounded_channel();
 
         for i in 0..connections {
-            let ws_stream = connect_websocket_optimized(url)
-                .await
-                .expect("Failed to connect");
-            stream_map.insert(i, ws_stream);
+            let url = url.to_string();
+            let tx = tx.clone();
+
+            tokio::spawn(async move {
+                loop {
+                    tracing::debug!("Connecting WebSocket connection {}", i);
+                    let mut ws = match connect_websocket_optimized(&url).await {
+                        Ok(ws) => ws,
+                        Err(e) => {
+                            tracing::error!("Failed to connect WebSocket {}: {}", i, e);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+
+                    tracing::debug!("WebSocket connection {} established", i);
+
+                    loop {
+                        let frame = match ws.read_frame().await {
+                            Ok(f) => f,
+                            Err(e) => {
+                                tracing::error!("Error reading frame on connection {}: {}", i, e);
+                                break;
+                            }
+                        };
+
+                        let receive_time = Instant::now();
+
+                        match frame.opcode {
+                            OpCode::Text => match std::str::from_utf8(&frame.payload) {
+                                Ok(text) => {
+                                    if tx.send((text.to_string(), receive_time)).is_err() {
+                                        tracing::error!("Failed to send message to channel");
+                                        return;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to convert frame to text: {}", e);
+                                }
+                            },
+                            OpCode::Close => {
+                                tracing::debug!("WebSocket connection {} closed", i);
+                                break;
+                            }
+                            OpCode::Ping => {
+                                if let Err(e) = ws
+                                    .write_frame(fastwebsockets::Frame::pong(frame.payload))
+                                    .await
+                                {
+                                    tracing::error!("Failed to send pong: {}", e);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    tracing::debug!("Reconnecting WebSocket connection {}", i);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            });
         }
+
         SequencerReader {
-            stream_map,
-            url: url.to_string(),
+            rx,
             chain_id,
             buffer: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -157,34 +274,13 @@ impl SequencerReader {
 
     /// Converts the SequencerReader into a stream of SequencerMessage results.
     pub fn into_stream(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
-        tracing::debug!(
-            "Creating sequencer message stream with {} connections",
-            self.stream_map.len()
-        );
+        tracing::debug!("Creating sequencer message stream");
         let buffer_for_reader = self.buffer.clone();
         tokio::spawn(async move {
             let mut dedup_map: HashSet<u64> = std::collections::HashSet::new();
             tracing::debug!("Stream started, waiting for messages");
 
-            while let Some(message) = self.stream_map.next().await {
-                if message.1.is_err() {
-                    tracing::error!("Error receiving message: {:?}", message.1.err().unwrap());
-                    // reconnect the websocket
-                    tracing::debug!("Reconnecting websocket for connection {}", message.0);
-                    let ws_stream = connect_websocket_optimized(&self.url)
-                        .await
-                        .expect("Failed to reconnect");
-                    self.stream_map.insert(message.0, ws_stream);
-                    continue;
-                }
-                let message = message.1.unwrap();
-                let msg_text = match message.into_text() {
-                    Ok(text) => text,
-                    Err(e) => {
-                        tracing::error!("Failed to convert message to text: {}", e);
-                        continue;
-                    }
-                };
+            while let Some((msg_text, message_receive)) = self.rx.recv().await {
                 if msg_text.is_empty() {
                     tracing::debug!("Received empty message");
                     continue;
@@ -203,7 +299,7 @@ impl SequencerReader {
                         continue;
                     }
                 };
-                let message_receive = Instant::now();
+
                 for msg in messages {
                     let seq_num = msg.sequence_number;
                     if dedup_map.contains(&seq_num) {
