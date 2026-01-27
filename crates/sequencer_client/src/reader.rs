@@ -36,6 +36,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamMap;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use rustls::pki_types::ServerName;
 
 #[derive(Debug)]
 pub struct SequencerMessage {
@@ -56,6 +57,62 @@ pub struct BufferedMessage {
     pub message: BroadcastFeedMessage,
     pub received_at: Instant,
     pub version: u8,
+}
+
+/// Creates a WebSocket connection with optimized TCP settings.
+/// Enables TCP_NODELAY to disable Nagle's algorithm for lower latency.
+async fn connect_websocket_optimized(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    // Parse URL to extract host and port
+    let parsed_url = url::Url::parse(url)?;
+    let host = parsed_url.host_str().ok_or_else(|| eyre!("Invalid URL: no host"))?;
+    let port = parsed_url.port_or_known_default().ok_or_else(|| eyre!("Invalid URL: no port"))?;
+    let is_wss = parsed_url.scheme() == "wss";
+
+    // Create TCP connection
+    let addr = format!("{}:{}", host, port);
+    let tcp_stream = TcpStream::connect(&addr).await?;
+
+    // Enable TCP_NODELAY for low-latency (disables Nagle's algorithm)
+    tcp_stream.set_nodelay(true)?;
+
+    // Optional: Set larger TCP buffers for better throughput
+    // Commented out by default, uncomment if needed
+    // let _ = tcp_stream.set_recv_buffer_size(2_097_152); // 2MB
+    // let _ = tcp_stream.set_send_buffer_size(2_097_152); // 2MB
+
+    // Wrap in TLS if needed
+    let stream: MaybeTlsStream<TcpStream> = if is_wss {
+        // Load native root certificates
+        let mut root_store = rustls::RootCertStore::empty();
+        let certs = rustls_native_certs::load_native_certs();
+
+        for cert in certs.certs {
+            root_store.add(cert)
+                .map_err(|e| eyre!("Failed to add cert: {}", e))?;
+        }
+
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+        let server_name = ServerName::try_from(host)
+            .map_err(|_| eyre!("Invalid DNS name: {}", host))?
+            .to_owned();
+
+        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+        MaybeTlsStream::Rustls(tls_stream)
+    } else {
+        MaybeTlsStream::Plain(tcp_stream)
+    };
+
+    // Perform WebSocket handshake
+    let request = url.into_client_request()?;
+    let (ws_stream, _) = tokio_tungstenite::client_async(request, stream).await?;
+
+    Ok(ws_stream)
 }
 
 /// SequencerReader is the main struct of this library.
@@ -85,7 +142,7 @@ impl SequencerReader {
         let mut stream_map = StreamMap::new();
 
         for i in 0..connections {
-            let (ws_stream, _) = tokio_tungstenite::connect_async(url)
+            let ws_stream = connect_websocket_optimized(url)
                 .await
                 .expect("Failed to connect");
             stream_map.insert(i, ws_stream);
@@ -114,7 +171,7 @@ impl SequencerReader {
                     tracing::error!("Error receiving message: {:?}", message.1.err().unwrap());
                     // reconnect the websocket
                     tracing::debug!("Reconnecting websocket for connection {}", message.0);
-                    let (ws_stream, _) = tokio_tungstenite::connect_async(&self.url)
+                    let ws_stream = connect_websocket_optimized(&self.url)
                         .await
                         .expect("Failed to reconnect");
                     self.stream_map.insert(message.0, ws_stream);
@@ -178,16 +235,17 @@ impl SequencerReader {
                         let BufferedMessage { message, received_at, version } = buf.remove(&first_key).unwrap();
                         drop(buf); // release lock before processing
 
-                        let l1_msg = message.message_with_meta_data.l1_incoming_message.clone();
+                        let header = message.message_with_meta_data.l1_incoming_message.header.clone();
+                        let l1_msg = message.message_with_meta_data.l1_incoming_message;
                         match parse_message(l1_msg, self.chain_id, version,
                         ) {
                         Ok(messages) => {
                                 yield Ok(SequencerMessage {
                                     sequence_number: message.sequence_number,
                                     txs: messages,
-                                    timestamp: message.message_with_meta_data.l1_incoming_message.header.timestamp,
+                                    timestamp: header.timestamp,
                                     received_at,
-                                    l1_header: L1Header::from_header(&message.message_with_meta_data.l1_incoming_message.header, message.message_with_meta_data.delayed_messages_read).unwrap(),
+                                    l1_header: L1Header::from_header(&header, message.message_with_meta_data.delayed_messages_read).unwrap(),
                                 });
                         }
                         Err(e) => {
@@ -256,12 +314,10 @@ pub fn parse_message(
             Ok(vec![ArbTxEnvelope::DepositTx(tx)])
         }
         MessageType::SubmitRetryable => {
-            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg.clone())?;
+            tracing::debug!("Retyrable message: {:?}", msg);
+            let mut buffer_vec = BASE64_STANDARD.decode(msg.l2msg)?;
             let buffer = buffer_vec.as_mut_slice();
             //log the whole message and the buffer
-            tracing::debug!("Retyrable message: {:?}", msg);
-            tracing::debug!("Retryable message buffer: {}", hex::encode(&buffer));
-
             let tx = parse_submit_retryable(
                 &mut &*buffer,
                 chain_id,
