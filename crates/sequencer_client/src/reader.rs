@@ -243,13 +243,42 @@ impl SequencerReader {
             let tx = tx.clone();
 
             tokio::spawn(async move {
+                // Stagger connection initialization to avoid rate limiting
+                // Each connection waits i * 100ms before first connection attempt
+                if i > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(i as u64 * 100)).await;
+                }
+
+                let mut backoff_secs = 1u64;
+                const MAX_BACKOFF_SECS: u64 = 60;
+
                 loop {
                     tracing::debug!("Connecting WebSocket connection {}", i);
                     let mut ws = match connect_websocket_optimized(&url).await {
-                        Ok(ws) => ws,
+                        Ok(ws) => {
+                            // Reset backoff on successful connection
+                            backoff_secs = 1;
+                            ws
+                        }
                         Err(e) => {
-                            tracing::error!("Failed to connect WebSocket {}: {}", i, e);
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            let error_msg = e.to_string();
+
+                            // Check if it's a 429 error
+                            if error_msg.contains("429") || error_msg.contains("Too Many Requests")
+                            {
+                                tracing::warn!(
+                                    "Rate limited (429) on WebSocket {} - backing off for {} seconds",
+                                    i,
+                                    backoff_secs
+                                );
+                            } else {
+                                tracing::error!("Failed to connect WebSocket {}: {}", i, e);
+                            }
+
+                            // Exponential backoff
+                            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs))
+                                .await;
+                            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
                             continue;
                         }
                     };
