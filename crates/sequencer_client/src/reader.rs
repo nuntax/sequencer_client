@@ -425,6 +425,86 @@ impl SequencerReader {
                 }
         })
     }
+
+    /// Converts the SequencerReader into a low-latency stream that emits messages immediately
+    /// without waiting for reordering. Messages may arrive out of sequence order.
+    /// Use this when latency is more critical than strict ordering.
+    /// 
+    /// # Returns
+    /// A stream of SequencerMessage results that may arrive out of sequence order.
+    pub fn into_stream_unordered(mut self) -> impl Stream<Item = Result<SequencerMessage>> + Unpin {
+        tracing::debug!("Creating low-latency unordered sequencer message stream");
+        let (tx, mut rx) = mpsc::unbounded_channel::<BufferedMessage>();
+        
+        tokio::spawn(async move {
+            let mut dedup_map: HashSet<u64> = HashSet::new();
+            tracing::debug!("Low-latency stream started, waiting for messages");
+
+            while let Some((msg_text, message_receive)) = self.rx.recv().await {
+                if msg_text.is_empty() {
+                    continue;
+                }
+                
+                let (messages, version) = match serde_json::from_str::<Root>(&msg_text) {
+                    Ok(r) => {
+                        if let Some(msgs) = r.messages {
+                            (msgs, r.version)
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Failed to parse JSON: {}, text: {}", e, msg_text);
+                        continue;
+                    }
+                };
+
+                for msg in messages {
+                    let seq_num = msg.sequence_number;
+                    if dedup_map.contains(&seq_num) {
+                        continue;
+                    }
+                    dedup_map.insert(seq_num);
+                    
+                    // Immediately forward the message without buffering
+                    let buffered_msg = BufferedMessage {
+                        message: msg,
+                        received_at: message_receive,
+                        version,
+                    };
+                    
+                    if tx.send(buffered_msg).is_err() {
+                        tracing::error!("Failed to send message to stream consumer");
+                        return;
+                    }
+                }
+            }
+            tracing::debug!("WebSocket stream ended");
+        });
+        
+        Box::pin(stream! {
+            while let Some(BufferedMessage { message, received_at, version }) = rx.recv().await {
+                let header = message.message_with_meta_data.l1_incoming_message.header.clone();
+                let l1_msg = message.message_with_meta_data.l1_incoming_message;
+                
+                match parse_message(l1_msg, self.chain_id, version) {
+                    Ok(messages) => {
+                        yield Ok(SequencerMessage {
+                            sequence_number: message.sequence_number,
+                            txs: messages,
+                            timestamp: header.timestamp,
+                            received_at,
+                            l1_header: L1Header::from_header(&header, message.message_with_meta_data.delayed_messages_read).unwrap(),
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse message: {}", e);
+                        continue;
+                    }
+                }
+            }
+        })
+    }
 }
 
 pub fn parse_message(
